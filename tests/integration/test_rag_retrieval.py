@@ -89,11 +89,11 @@ class RetrievalTest(unittest.TestCase):
         self.assertGreater(len(patch_chunks), 1)
 
     def test_only_canonical_item_ids(self):
-        """모드 전용 사본이 섞이면 안 된다.
+        """4자리 ID 아이템만 담는다. 6자리 ID 는 다른 모드용 사본으로 보고 뺀다.
 
-        322065 는 2065(슈렐리아의 군가)의 사본이고 663193 은 협곡에 없는 아이템인데,
-        둘 다 maps["11"] 이 참이라 맵 검사만으로는 걸러지지 않는다.
-        경기 기록과 인게임 API 가 쓰는 ID 는 4자리다.
+        322065 는 2065(슈렐리아의 군가) 앞에 32 를 붙인 것이고 이름도 같다.
+        6자리 중에도 maps["11"] 이 참인 것이 있어 맵 검사만으로는 걸러지지 않는다.
+        실제 경기 기록에서 협곡 아이템이 4자리로 오는지는 아직 확인하지 않았다.
         """
         chunks = self.index_for('rag/documents_ddragon.json')
         items = [chunk for chunk in chunks if chunk['kind'] == 'item']

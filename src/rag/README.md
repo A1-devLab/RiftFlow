@@ -28,6 +28,8 @@ python -m rag history
 
 대화는 기본으로 `data/conversations.db` 에 남습니다. 남기지 않으려면 `--no-save` 를 줍니다.
 
+근거 자료로 쓰는 Data Dragon 의 필드별 형식과, 어떤 질문에 답할 수 있고 없는지는 [`DATA_DRAGON.md`](DATA_DRAGON.md) 에 정리했습니다.
+
 ## 구성
 
 | 파일 | 하는 일 |
