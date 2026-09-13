@@ -76,6 +76,12 @@ WEIGHT_KIND = 2
 WEIGHT_PATCH_INTENT = 5
 MIN_SCORE = 2
 
+# 질문에 가장 잘 맞는 이름의 이 비율 이상 맞아야 이름 점수를 준다.
+# '무한의 대검 언제 사?' 에서 무한의 대검은 100% 맞는데 처형인의 대검, B.F. 대검도
+# '대검' 하나로 50% 가 되어 근거에 섞였다. 더 잘 맞는 이름이 있으면 반쯤 맞는 이름은 뺀다.
+# 두 이름을 함께 물으면(66%, 71%) 둘 다 남고, '대검 종류' 처럼 모두 비슷하면(50%) 모두 남는다.
+NAME_RELATIVE_FLOOR = 0.8
+
 
 def strip_particle(word):
     for particle in PARTICLES:
@@ -92,11 +98,15 @@ STOPWORDS = {'이번', '요즘', '지금', '어떤', '어떻게', '언제', '뭐
 
 
 def terms_of(question):
-    """질문을 검색어 목록으로 만든다. 한 글자짜리와 이어 주는 말은 버린다."""
+    """질문을 검색어 목록으로 만든다. 한 글자짜리와 이어 주는 말은 버린다.
+
+    같은 낱말은 한 번만 넣는다. '무한의 대검이랑 처형인의 대검' 처럼 같은 말이 두 번 나오면
+    본문에 그 말이 있는 문서가 두 번 점수를 받아, 샤코가 두 아이템보다 위로 올라왔다.
+    """
     words = []
     for raw in question.replace('?', ' ').replace(',', ' ').split():
         word = strip_particle(raw.strip('.!~')).lower()
-        if len(word) >= 2 and word not in STOPWORDS:
+        if len(word) >= 2 and word not in STOPWORDS and word not in words:
             words.append(word)
     return words
 
@@ -196,12 +206,14 @@ def name_coverage(name, terms):
 
 
 def score_chunk(chunk, terms, tags, champion, weights, playstyle, champion_tags, kinds,
-                tag_weights):
+                tag_weights, coverage=None):
+    """청크 하나의 점수. coverage 를 주면 이름 겹침 비율로 그 값을 쓴다 (search 가 기준 미달이면 0 을 넘긴다)."""
     score = 0.0
     reasons = []
 
     name = chunk['subject_name'].lower()
-    coverage = name_coverage(name, terms)
+    if coverage is None:
+        coverage = name_coverage(name, terms)
     if coverage:
         score += WEIGHT_NAME * coverage
         reasons.append('이름:%s(%d%%)' % (chunk['subject_name'], coverage * 100))
@@ -268,10 +280,21 @@ def search(chunks, question, analysis=None, top_k=5, min_score=MIN_SCORE, max_pe
                 break
     playstyle, from_champion = analysis_tags(analysis, champion_ddragon_tags)
 
+    # 이름 겹침 비율은 이름마다 한 번만 계산하고, 가장 잘 맞는 이름을 기준으로 거른다.
+    coverage_by_name = {}
+    for chunk in chunks:
+        name = chunk['subject_name'].lower()
+        if name not in coverage_by_name:
+            coverage_by_name[name] = name_coverage(name, terms)
+    best = max(coverage_by_name.values(), default=0.0)
+    floor = best * NAME_RELATIVE_FLOOR
+
     scored = []
     for chunk in chunks:
+        coverage = coverage_by_name[chunk['subject_name'].lower()]
         score, reasons = score_chunk(chunk, terms, tags, champion, weights,
-                                     playstyle, from_champion, kinds, tag_weights)
+                                     playstyle, from_champion, kinds, tag_weights,
+                                     coverage=coverage if coverage >= floor else 0.0)
         if score >= min_score:
             scored.append({'score': round(score, 3), 'reasons': reasons, 'chunk': chunk})
 

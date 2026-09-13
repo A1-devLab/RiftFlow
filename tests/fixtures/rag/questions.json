@@ -131,6 +131,28 @@
       }
     },
     {
+      "case_id": "item_name_not_confused",
+      "description": "이름이 비슷한 아이템이 근거에 섞이지 않아야 한다.",
+      "input": {
+        "question": "무한의 대검 언제 사?",
+        "patch": "26.18",
+        "analysis": null
+      },
+      "fixture_documents": "rag/documents_ddragon.json",
+      "expect": {
+        "insufficient_evidence": false,
+        "sources_min": 1,
+        "must_cite_doc_ids": [
+          "ddragon:item:3031:16.18.1"
+        ],
+        "must_not_cite_doc_ids": [
+          "ddragon:item:3123:16.18.1",
+          "ddragon:item:1038:16.18.1"
+        ],
+        "notes": "처형인의 대검과 B.F. 대검은 '대검' 만 겹친다. 무한의 대검이 이름 전체로 맞으므로 반쯤 맞는 이름은 근거에 넣지 않는다. 섞이면 프롬프트에 상관없는 아이템이 들어간다."
+      }
+    },
+    {
       "case_id": "patch_note_lookup",
       "description": "패치 노트 기반 질문. 문서 하나가 통짜라 청킹이 되어야 답할 수 있다.",
       "input": {

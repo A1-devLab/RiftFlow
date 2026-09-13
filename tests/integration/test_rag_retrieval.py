@@ -56,6 +56,9 @@ class RetrievalTest(unittest.TestCase):
                 found = [row['chunk']['doc_id'] for row in self.run_case(case)]
                 for doc_id in case['expect']['must_cite_doc_ids']:
                     self.assertIn(doc_id, found)
+                # 정답이 들어오는지만 보면 엉뚱한 문서가 섞여도 통과한다. 섞이면 안 되는 문서도 검사한다.
+                for doc_id in case['expect'].get('must_not_cite_doc_ids', []):
+                    self.assertNotIn(doc_id, found)
 
     def test_no_evidence_returns_nothing(self):
         for case in self.cases:
@@ -122,6 +125,45 @@ class RetrievalTest(unittest.TestCase):
                     self.assertNotIn(tag, chunk['situation_tags'])
         self.assertEqual(champions['Garen']['fields']['damage_type'], 'AD')
         self.assertEqual(champions['Ahri']['fields']['damage_type'], 'AP')
+
+
+class NameMatchTest(unittest.TestCase):
+    """비슷한 이름끼리 섞이지 않는지 본다. 이름이 반만 겹치는 아이템이 근거에 섞였던 문제."""
+
+    INFINITY = 'ddragon:item:3031:16.18.1'
+    EXECUTIONER = 'ddragon:item:3123:16.18.1'
+    BF_SWORD = 'ddragon:item:1038:16.18.1'
+    SCIMITAR = 'ddragon:item:3139:16.18.1'
+
+    @classmethod
+    def setUpClass(cls):
+        cls.chunks = build_index(load_documents(FIXTURES / 'rag' / 'documents_ddragon.json'))
+
+    def found(self, question):
+        return [row['chunk']['doc_id'] for row in search(self.chunks, question, top_k=5)]
+
+    def test_better_matching_name_pushes_out_half_matches(self):
+        found = self.found('무한의 대검 언제 사?')
+        self.assertEqual(found[0], self.INFINITY)
+        self.assertNotIn(self.EXECUTIONER, found)
+        self.assertNotIn(self.BF_SWORD, found)
+
+    def test_two_named_items_are_both_kept(self):
+        found = self.found('무한의 대검이랑 처형인의 대검 비교해줘')
+        self.assertEqual(set(found[:2]), {self.INFINITY, self.EXECUTIONER})
+
+    def test_ambiguous_name_keeps_every_candidate(self):
+        """'대검' 만 물으면 어느 대검인지 모르므로 후보를 모두 남긴다."""
+        found = self.found('대검 종류 알려줘')
+        for doc_id in (self.INFINITY, self.EXECUTIONER, self.BF_SWORD):
+            self.assertIn(doc_id, found)
+
+    def test_shortened_name_is_still_found(self):
+        self.assertEqual(self.found('시미터 어때?')[0], self.SCIMITAR)
+
+    def test_repeated_word_is_counted_once(self):
+        from rag.retrieve import terms_of
+        self.assertEqual(terms_of('무한의 대검이랑 처형인의 대검 비교해줘').count('대검'), 1)
 
 
 if __name__ == '__main__':
