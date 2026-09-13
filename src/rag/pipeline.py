@@ -80,7 +80,8 @@ def answer(chunks, question, analysis=None, patch=None, top_k=5,
                 reply = generate(prompt)
             except Exception as failure:          # noqa: BLE001
                 error = getattr(failure, 'message', str(failure))
-                outcome = dict(outcome, status='model_error', message=error)
+                outcome = dict(outcome, status='model_error', message=error,
+                               error_detail=getattr(failure, 'detail', None))
 
     # calls_model 은 '부를 조건이 된다' 는 뜻이고, 이것은 '실제로 불렀다' 는 뜻이다.
     # 프롬프트만 만들고 멈춘 경우는 토큰을 쓰지 않았으므로 둘을 나눈다.

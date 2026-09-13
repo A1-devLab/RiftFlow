@@ -16,6 +16,7 @@ API 키는 환경변수 GEMINI_API_KEY 에서 읽는다.
 아직 확인하지 못한 것: 성공 응답의 본문 구조. 첫 성공 호출 때 확인해야 한다.
 """
 import json
+import math
 import os
 import time
 import urllib.error
@@ -25,11 +26,13 @@ ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/%s:generateC
 DEFAULT_MODEL = 'gemini-3.8-flash'
 TIMEOUT = 60
 
-# 503 은 모델이 붐빌 때 나온다. 잠깐 뒤 풀리는 경우가 많아 몇 번 더 시도한다.
+# 503 은 모델이 붐빌 때 나온다. 잠깐 뒤 풀리는 경우가 있어 한 번만 더 시도한다.
+# 무료 등급은 모델당 하루 20번이라, 재시도 한 번도 하루 한도를 쓸 수 있다.
+# 예전에는 2초, 4초 뒤 두 번 더 보내서 한 질문에 최대 3번 나갔다. 지금은 5초 뒤 한 번, 최대 2번이다.
 # 429(한도 초과)는 다시 불러도 같은 결과라 재시도하지 않는다.
 RETRY_CODES = (500, 502, 503, 504)
-RETRIES = 2
-BACKOFF_SECONDS = 2
+RETRIES = 1
+BACKOFF_SECONDS = 5
 
 # 근거에 있는 내용을 그대로 옮기는 일이라 창의성은 낮게 둔다.
 #
@@ -45,11 +48,70 @@ DEFAULT_CONFIG = {
 class GeminiError(Exception):
     """호출 실패. 사용자에게 보여 줄 메시지를 message 에 담는다."""
 
-    def __init__(self, message, status=None, retry_after=None):
+    def __init__(self, message, status=None, retry_after=None, kind=None, detail=None):
         super().__init__(message)
         self.message = message
         self.status = status
-        self.retry_after = retry_after
+        self.retry_after = retry_after     # 몇 초 뒤 다시 시도할지. 기다려도 소용없으면 None
+        self.kind = kind                   # daily_quota, minute_quota, quota 등
+        self.detail = detail               # 대화 기록에 남길 원인. 사용자에게 보여 주지 않는다
+
+
+def parse_seconds(value):
+    """'59s', '59.77s', '30' 같은 대기 시간을 초 단위 정수로 바꾼다. 없거나 읽을 수 없으면 None."""
+    if value is None:
+        return None
+    text = str(value).strip().rstrip('s')
+    try:
+        return int(math.ceil(float(text)))
+    except ValueError:
+        return None
+
+
+def quota_error(body, model):
+    """429 본문에서 어떤 한도에 걸렸는지 읽어 알맞은 안내를 만든다.
+
+    Gemini 는 하루 한도에 걸려도 'Please retry in 59s' 를 붙여 보낸다.
+    그 말대로 1분 기다려도 풀리지 않아서, 한도 ID(quotaId)로 하루 한도인지 먼저 가린다.
+    실제로 받은 값: quotaId GenerateRequestsPerDayPerProjectPerModel-FreeTier, quotaValue 20 (2026-09-13)
+    """
+    quota_id = limit = delay = None
+    try:
+        error = json.loads(body).get('error') or {}
+    except (ValueError, AttributeError):
+        error = {}
+    for item in error.get('details') or []:
+        item_type = str(item.get('@type', ''))
+        if item_type.endswith('QuotaFailure'):
+            for violation in item.get('violations') or []:
+                quota_id = quota_id or violation.get('quotaId')
+                limit = limit or violation.get('quotaValue')
+        elif item_type.endswith('RetryInfo'):
+            delay = parse_seconds(item.get('retryDelay'))
+
+    quota = quota_id or ''
+    tier = '무료 ' if 'FreeTier' in quota else ''
+    detail = {
+        'status': 429,
+        'model': model,
+        'quota_id': quota_id,
+        'quota_limit': int(limit) if limit is not None and str(limit).isdigit() else limit,
+        'server_retry_delay': delay,
+    }
+
+    if 'PerDay' in quota:
+        count = '%s회' % limit if limit is not None else '한도'
+        message = ('오늘 %s %s호출 %s를 다 썼습니다. 태평양 시간 자정에 초기화되며, '
+                   '한국 시간으로 오후 4시(11월 초~3월 초에는 오후 5시)입니다. 그 전에는 기다려도 풀리지 않습니다.'
+                   % (model, tier, count))
+        return GeminiError(message, status=429, retry_after=None, kind='daily_quota', detail=detail)
+    if 'PerMinute' in quota:
+        wait = '%d초 뒤' % delay if delay else '잠시 뒤'
+        return GeminiError('분당 호출 한도를 넘었습니다. %s 다시 시도하세요.' % wait,
+                           status=429, retry_after=delay, kind='minute_quota', detail=detail)
+    return GeminiError('호출 한도를 넘었습니다. 한도 종류를 알 수 없어 잠시 뒤 다시 시도하고, '
+                       '계속되면 https://ai.dev/rate-limit 에서 사용량을 확인하세요.',
+                       status=429, retry_after=delay, kind='quota', detail=detail)
 
 
 def api_key(explicit=None):
@@ -95,7 +157,7 @@ def classify(code, detail, model):
     if code == 404:
         return GeminiError('모델을 찾을 수 없습니다: %s. 모델 이름을 확인하세요.' % model, status=404)
     if code == 429:
-        return GeminiError('호출 한도를 넘었습니다. 잠시 뒤 다시 시도하세요.', status=429)
+        return quota_error(detail, model)
     if code == 503:
         return GeminiError('모델이 지금 혼잡합니다. 잠시 뒤 다시 시도하세요. '
                            '계속되면 --model 로 다른 모델을 지정해 보세요.', status=503)
@@ -125,7 +187,9 @@ def generate(prompt, model=DEFAULT_MODEL, key=None, config=None, opener=None,
         except urllib.error.HTTPError as error:
             detail = error.read().decode('utf-8', 'replace')
             failure = classify(error.code, detail, model)
-            failure.retry_after = error.headers.get('Retry-After')
+            # 하루 한도는 기다려도 풀리지 않으므로 헤더의 대기 시간을 따르지 않는다.
+            if failure.retry_after is None and failure.kind != 'daily_quota':
+                failure.retry_after = parse_seconds(error.headers.get('Retry-After'))
             if error.code in RETRY_CODES and attempt < retries:
                 sleep(BACKOFF_SECONDS * (attempt + 1))
                 continue

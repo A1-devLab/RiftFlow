@@ -18,7 +18,8 @@ sys.path.insert(0, str(ROOT / 'src'))
 
 from rag import conversation as conv  # noqa: E402
 from rag.config import parse  # noqa: E402
-from rag.gemini import GeminiError, build_request, generate, read_text  # noqa: E402
+from rag.gemini import (BACKOFF_SECONDS, RETRIES, GeminiError, build_request,  # noqa: E402
+                        generate, read_text)
 from rag.pipeline import answer, prepare  # noqa: E402
 from rag.prompt import build, name_map, render_fields  # noqa: E402
 from rag.store import build_index, load_documents  # noqa: E402
@@ -189,7 +190,7 @@ class GeminiTest(unittest.TestCase):
             generate(self.prompt, key='test-key',
                      opener=failing_opener(429, {'Retry-After': '30'}))
         self.assertEqual(caught.exception.status, 429)
-        self.assertEqual(caught.exception.retry_after, '30')
+        self.assertEqual(caught.exception.retry_after, 30)
 
     def test_busy_model_is_retried_then_explained(self):
         """503 은 모델이 붐빌 때 온다. 잠깐 뒤 풀리는 경우가 많다."""
@@ -207,7 +208,70 @@ class GeminiTest(unittest.TestCase):
         self.assertEqual(caught.exception.status, 503)
         self.assertIn('혼잡', caught.exception.message)
         self.assertNotIn('{', caught.exception.message)
-        self.assertEqual(slept, [2, 4])
+        self.assertEqual(slept, [BACKOFF_SECONDS * 1, BACKOFF_SECONDS * 2])
+
+    def test_busy_model_is_retried_only_once_by_default(self):
+        """무료 등급은 하루 20번이라 재시도 한 번도 한도를 쓴다. 기본은 한 번만 더 보낸다."""
+        calls, slept = [], []
+
+        def opener(request, timeout=None):
+            calls.append(1)
+            raise urllib.error.HTTPError(request.full_url, 503, 'busy', {}, io.BytesIO(b'{}'))
+
+        with self.assertRaises(GeminiError):
+            generate(self.prompt, key='test-key', opener=opener, sleep=slept.append)
+        self.assertEqual(RETRIES, 1)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(slept, [BACKOFF_SECONDS])
+
+    def quota_body(self, quota_id, value='20', delay='59s'):
+        """2026-09-13 실제로 받은 429 본문과 같은 모양."""
+        return json.dumps({'error': {
+            'code': 429, 'status': 'RESOURCE_EXHAUSTED',
+            'message': 'You exceeded your current quota ... Please retry in 59.77s.',
+            'details': [
+                {'@type': 'type.googleapis.com/google.rpc.Help', 'links': []},
+                {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{
+                    'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests',
+                    'quotaId': quota_id, 'quotaValue': value}]},
+                {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': delay},
+            ]}}).encode('utf-8')
+
+    def call_with_429(self, body):
+        calls = []
+
+        def opener(request, timeout=None):
+            calls.append(1)
+            raise urllib.error.HTTPError(request.full_url, 429, 'quota', {}, io.BytesIO(body))
+
+        with self.assertRaises(GeminiError) as caught:
+            generate(self.prompt, key='test-key', opener=opener, sleep=lambda seconds: None)
+        self.assertEqual(len(calls), 1, '한도 초과는 다시 보내지 않는다')
+        return caught.exception
+
+    def test_daily_quota_does_not_say_wait_a_moment(self):
+        """하루 한도는 'retry in 59s' 가 붙어 와도 1분 기다려서는 풀리지 않는다. 실제로 그랬다."""
+        error = self.call_with_429(self.quota_body('GenerateRequestsPerDayPerProjectPerModel-FreeTier'))
+        self.assertEqual(error.kind, 'daily_quota')
+        self.assertIsNone(error.retry_after)
+        self.assertIn('20회', error.message)
+        self.assertIn('오후 4시', error.message)
+        self.assertNotIn('잠시 뒤', error.message)
+        self.assertEqual(error.detail['quota_limit'], 20)
+        self.assertEqual(error.detail['server_retry_delay'], 59)
+        self.assertEqual(error.detail['quota_id'], 'GenerateRequestsPerDayPerProjectPerModel-FreeTier')
+
+    def test_minute_quota_says_how_long_to_wait(self):
+        error = self.call_with_429(self.quota_body('GenerateRequestsPerMinutePerProjectPerModel-FreeTier',
+                                                   value='5', delay='12.4s'))
+        self.assertEqual(error.kind, 'minute_quota')
+        self.assertEqual(error.retry_after, 13)
+        self.assertIn('13초 뒤', error.message)
+
+    def test_unknown_quota_points_to_usage_page(self):
+        error = self.call_with_429(b'{}')
+        self.assertEqual(error.kind, 'quota')
+        self.assertIn('ai.dev/rate-limit', error.message)
 
     def test_busy_then_success(self):
         payload = {'candidates': [{'content': {'parts': [{'text': '답변'}]}}]}
@@ -338,6 +402,44 @@ class ConversationTest(unittest.TestCase):
         self.assertEqual(row['status'], 'ready')
         self.assertEqual(row['tokens'], 0)
         self.assertEqual(row['tokens_unknown'], 0)
+
+    def test_quota_cause_is_saved_in_error_detail(self):
+        """화면 문구만으로는 어떤 한도였는지 알 수 없었다. 원인을 대화 기록에 남긴다."""
+        detail = {'status': 429, 'model': 'gemini-3.8-flash', 'quota_limit': 20,
+                  'quota_id': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'server_retry_delay': 59}
+
+        def daily_limited(prompt):
+            raise GeminiError('오늘 호출 20회를 다 썼습니다.', status=429, kind='daily_quota', detail=detail)
+
+        answer(self.chunks, QUESTION, generate=daily_limited, store=self.store)
+        saved = self.db.execute('SELECT status, error_detail FROM turns WHERE conversation_id=?',
+                                (self.cid,)).fetchone()
+        self.assertEqual(saved[0], 'model_error')
+        self.assertEqual(json.loads(saved[1])['quota_id'], detail['quota_id'])
+
+        answer(self.chunks, '점심 뭐 먹지', store=self.store)
+        blocked = self.db.execute("SELECT error_detail FROM turns WHERE status='off_topic'").fetchone()
+        self.assertIsNone(blocked[0])
+
+    def test_old_conversation_file_gets_the_new_column(self):
+        """error_detail 칸이 없던 예전 기록 파일도 기존 기록을 지우지 않고 칸만 더한다."""
+        path = Path(tempfile.mkdtemp()) / 'old.db'
+        old = conv.sqlite3.connect(path)
+        old.execute(conv.SCHEMA.replace('    error_detail TEXT,\n', ''))
+        old.execute("INSERT INTO turns (conversation_id, turn, created_at, question, status, "
+                    "evidence_doc_ids, sources) VALUES ('old', 1, 'then', '예전 질문', 'ready', '[]', '[]')")
+        old.commit()
+        old.close()
+
+        db = conv.connect(path)
+        try:
+            columns = {row[1] for row in db.execute('PRAGMA table_info(turns)')}
+            self.assertIn('error_detail', columns)
+            self.assertEqual(conv.history(db, 'old')[0]['question'], '예전 질문')
+            answer(self.chunks, '점심 뭐 먹지', store={'db': db, 'conversation_id': 'new'})
+            self.assertEqual(len(conv.history(db, 'new')), 1)
+        finally:
+            db.close()
 
     def test_model_failure_is_recorded(self):
         def broken(prompt):

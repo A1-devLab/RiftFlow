@@ -33,6 +33,7 @@ SCHEMA = '''CREATE TABLE IF NOT EXISTS turns (
     sources TEXT NOT NULL,
     patch TEXT,
     analysis TEXT,
+    error_detail TEXT,
     PRIMARY KEY (conversation_id, turn))'''
 
 
@@ -41,6 +42,11 @@ def connect(path=DB_PATH):
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path)
     db.execute(SCHEMA)
+    # 예전에 만든 기록 파일에는 error_detail 칸이 없다. 기존 기록은 두고 칸만 더한다.
+    columns = {row[1] for row in db.execute('PRAGMA table_info(turns)')}
+    if 'error_detail' not in columns:
+        with db:
+            db.execute('ALTER TABLE turns ADD COLUMN error_detail TEXT')
     return db
 
 
@@ -69,7 +75,7 @@ def save(db, conversation_id, question, outcome, prompt=None, reply=None,
         usage = {'prompt_tokens': 0, 'output_tokens': 0, 'total_tokens': 0}
     turn = next_turn(db, conversation_id)
     with db:
-        db.execute('INSERT INTO turns VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (
+        db.execute('INSERT INTO turns VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (
             conversation_id,
             turn,
             datetime.now(timezone.utc).isoformat(),
@@ -88,6 +94,8 @@ def save(db, conversation_id, question, outcome, prompt=None, reply=None,
             json.dumps(outcome.get('sources') or [], ensure_ascii=False),
             patch,
             json.dumps(analysis, ensure_ascii=False) if analysis else None,
+            # 모델 호출이 왜 실패했는지. 하루 한도인지 분당 한도인지 같은 원인을 남긴다.
+            json.dumps(outcome['error_detail'], ensure_ascii=False) if outcome.get('error_detail') else None,
         ))
     return turn
 
