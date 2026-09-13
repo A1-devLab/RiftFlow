@@ -12,7 +12,7 @@ from .config import load_env
 from .pipeline import answer
 from .store import build_index, load_documents
 
-DEFAULT_FIXTURE = Path('tests/fixtures/knowledge/documents_ddragon.json')
+DEFAULT_FIXTURE = Path('tests/fixtures/rag/documents_ddragon.json')
 
 LABELS = {
     'off_topic': '차단 (롤 질문 아님)',
@@ -102,7 +102,9 @@ def main():
             print('\n토큰: %s' % outcome['usage'])
     elif outcome['message']:
         print('\n사용자에게: %s' % outcome['message'])
-        print('Gemini 호출 안 함 (토큰 안 씀)')
+        # 모델 호출이 실패한 경우는 부르려고 시도한 것이다. '호출 안 함' 이라고 적으면 틀린 안내다.
+        if outcome['status'] != 'model_error':
+            print('Gemini 호출 안 함 (토큰 안 씀)')
         return 0
     elif outcome['prompt']:
         print('\n프롬프트 준비됨: %d자 / 추정 %d토큰 (--call 로 실제 호출)'

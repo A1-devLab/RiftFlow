@@ -79,12 +79,12 @@ class RetrievalTest(unittest.TestCase):
 
     def test_chunks_fit_in_a_prompt(self):
         """패치 노트 한 문서는 수천 자다. 청킹이 되어야 프롬프트에 넣을 수 있다."""
-        chunks = self.index_for('knowledge/documents_ddragon.json')
+        chunks = self.index_for('rag/documents_ddragon.json')
         longest = max(len(chunk['text']) for chunk in chunks)
         self.assertLess(longest, 600)
 
     def test_patch_note_is_split(self):
-        chunks = self.index_for('knowledge/documents_ddragon.json')
+        chunks = self.index_for('rag/documents_ddragon.json')
         patch_chunks = [chunk for chunk in chunks if chunk['kind'] == 'patch']
         self.assertGreater(len(patch_chunks), 1)
 
@@ -95,7 +95,7 @@ class RetrievalTest(unittest.TestCase):
         둘 다 maps["11"] 이 참이라 맵 검사만으로는 걸러지지 않는다.
         경기 기록과 인게임 API 가 쓰는 ID 는 4자리다.
         """
-        chunks = self.index_for('knowledge/documents_ddragon.json')
+        chunks = self.index_for('rag/documents_ddragon.json')
         items = [chunk for chunk in chunks if chunk['kind'] == 'item']
         self.assertTrue(items)
         for chunk in items:
@@ -103,7 +103,7 @@ class RetrievalTest(unittest.TestCase):
                 self.assertLessEqual(len(chunk['entity_id']), 4)
 
     def test_no_duplicate_item_names(self):
-        chunks = self.index_for('knowledge/documents_ddragon.json')
+        chunks = self.index_for('rag/documents_ddragon.json')
         names = [chunk['subject_name'] for chunk in chunks if chunk['kind'] == 'item']
         self.assertEqual(len(names), len(set(names)))
 
@@ -112,7 +112,7 @@ class RetrievalTest(unittest.TestCase):
 
         아크샨, 렐, 세라핀, 벡스는 난이도까지 0 이다. 0 대 0 을 '혼합' 으로 적으면 틀린 근거가 된다.
         """
-        chunks = self.index_for('knowledge/documents_ddragon.json')
+        chunks = self.index_for('rag/documents_ddragon.json')
         champions = {chunk['entity_id']: chunk for chunk in chunks if chunk['kind'] == 'champion'}
         for entity_id in ['Akshan', 'Rell', 'Seraphine', 'Vex']:
             with self.subTest(champion=entity_id):

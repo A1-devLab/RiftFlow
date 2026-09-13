@@ -10,7 +10,7 @@
         "patch": "26.18",
         "analysis": null
       },
-      "fixture_documents": "knowledge/documents_ddragon.json",
+      "fixture_documents": "rag/documents_ddragon.json",
       "expect": {
         "insufficient_evidence": false,
         "sources_min": 1,
@@ -34,7 +34,7 @@
           }
         }
       },
-      "fixture_documents": "knowledge/documents_ddragon.json",
+      "fixture_documents": "rag/documents_ddragon.json",
       "expect": {
         "insufficient_evidence": false,
         "sources_min": 1,
@@ -52,7 +52,7 @@
         "patch": "26.18",
         "analysis": null
       },
-      "fixture_documents": "knowledge/documents_ddragon.json",
+      "fixture_documents": "rag/documents_ddragon.json",
       "expect": {
         "insufficient_evidence": false,
         "sources_min": 1,
@@ -70,7 +70,7 @@
         "patch": "26.19",
         "analysis": null
       },
-      "fixture_documents": "knowledge/documents_empty.json",
+      "fixture_documents": "rag/documents_empty.json",
       "expect": {
         "insufficient_evidence": true,
         "sources_min": 0,
@@ -86,7 +86,7 @@
         "patch": "26.18",
         "analysis": null
       },
-      "fixture_documents": "knowledge/documents_ddragon.json",
+      "fixture_documents": "rag/documents_ddragon.json",
       "expect": {
         "insufficient_evidence": false,
         "sources_min": 0,
@@ -103,7 +103,7 @@
         "patch": "26.18",
         "analysis": null
       },
-      "fixture_documents": "knowledge/documents_ddragon.json",
+      "fixture_documents": "rag/documents_ddragon.json",
       "expect": {
         "insufficient_evidence": true,
         "sources_min": 0,
@@ -120,7 +120,7 @@
         "patch": null,
         "analysis": null
       },
-      "fixture_documents": "knowledge/documents_ddragon.json",
+      "fixture_documents": "rag/documents_ddragon.json",
       "expect": {
         "insufficient_evidence": false,
         "sources_min": 1,
@@ -138,7 +138,7 @@
         "patch": "26.18",
         "analysis": null
       },
-      "fixture_documents": "knowledge/documents_ddragon.json",
+      "fixture_documents": "rag/documents_ddragon.json",
       "expect": {
         "insufficient_evidence": false,
         "sources_min": 1,

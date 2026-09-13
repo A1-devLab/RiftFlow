@@ -9,12 +9,25 @@
 ## 폴더
 
 ```text
-knowledge/   근거 자료 목록 (knowledge.get_documents 의 출력 형태 가정)
-rag/         챗봇 질문과 검증 조건 (rag.answer_question 의 입력 형태 가정)
+rag/         rag 담당(이찬영)이 만들고 rag 테스트만 쓰는 샘플
+             documents_ddragon.json  근거 자료 목록
+             documents_empty.json    검색 결과 없음
+             questions.json          챗봇 질문과 검증 조건
 tools/       fixture 생성 스크립트
 ```
 
-## 근거 자료 (`knowledge/documents_ddragon.json`)
+근거 자료는 knowledge 모듈이 돌려줄 결과를 흉내 낸 것이지만 `knowledge/` 폴더에 두지 않습니다.
+
+- `docs/interfaces.md` 는 각 담당자가 자기 예시를 추가하도록 정합니다. knowledge 결과물의 예시는 knowledge 담당의 몫입니다.
+- 이 파일은 knowledge 의 공식 출력이 아닙니다. `get_documents` 는 아직 없고 반환 형식도 합의 전이라,
+  rag 담당이 Data Dragon 에서 받아 초안 형식으로 만든 것입니다.
+
+knowledge 의 실제 출력 형식이 정해지면 그 담당자가 자기 예시를 따로 추가하고, rag 는 그 형식에 맞춥니다.
+
+파일을 폴더로 나눌지 `knowledge_patch.html` 처럼 이름 앞에 모듈명을 붙일지는 팀 규칙이 아직 없습니다.
+지금은 두 방식이 섞여 있으니 합의 후 한쪽으로 맞춥니다.
+
+## 근거 자료 (`rag/documents_ddragon.json`)
 
 **Riot Games Data Dragon의 실제 데이터**입니다. 지어낸 수치가 아닙니다.
 Data Dragon은 공개 정적 데이터라 API 키가 필요 없고 개인정보가 들어가지 않습니다.
@@ -34,7 +47,7 @@ Data Dragon은 공개 정적 데이터라 API 키가 필요 없고 개인정보�
 재생성:
 
 ```bash
-python tests/fixtures/tools/build_ddragon_fixtures.py tests/fixtures/knowledge/documents_ddragon.json
+python tests/fixtures/tools/build_ddragon_fixtures.py tests/fixtures/rag/documents_ddragon.json
 ```
 
 항상 최신 패치를 받아오므로 결과의 `patch` 값과 `doc_id` 접미사가 바뀝니다.

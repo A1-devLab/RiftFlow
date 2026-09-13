@@ -58,7 +58,7 @@ class GuardTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.chunks = build_index(load_documents(
-            FIXTURES / 'knowledge' / 'documents_ddragon.json'))
+            FIXTURES / 'rag' / 'documents_ddragon.json'))
 
     def test_off_topic_is_blocked(self):
         for question in OFF_TOPIC:

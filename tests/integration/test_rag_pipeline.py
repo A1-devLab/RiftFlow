@@ -1,7 +1,7 @@
 """프롬프트 조립, Gemini 호출 처리, 대화 저장 검증.
 
 인터넷과 API 키가 필요 없다. Gemini 응답은 가짜로 대신한다.
-실제 키로 성공 응답을 받아 본 적이 없으므로, 첫 성공 호출 때 본문 구조를 확인해야 한다.
+가짜 응답의 구조는 2026-09-12 실제 키로 받은 성공 응답과 오류 응답에 맞춘 것이다.
 """
 import io
 import json
@@ -51,7 +51,7 @@ class PromptTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.chunks = build_index(load_documents(
-            FIXTURES / 'knowledge' / 'documents_ddragon.json'))
+            FIXTURES / 'rag' / 'documents_ddragon.json'))
         cls.evidence = prepare(cls.chunks, QUESTION)['evidence']
 
     def test_every_evidence_block_carries_id_and_source(self):
@@ -108,7 +108,7 @@ class PromptTest(unittest.TestCase):
         이것을 빼면 모델이 '가격 정보가 없어 답할 수 없다' 고 답한다. 실제로 그랬다.
         """
         chunks = build_index(load_documents(
-            FIXTURES / 'knowledge' / 'documents_ddragon.json'))
+            FIXTURES / 'rag' / 'documents_ddragon.json'))
         evidence = prepare(chunks, '무한의 대검 언제 사?')['evidence']
         prompt = build('무한의 대검 언제 사?', evidence)
         self.assertIn('3500골드', prompt['user'])
@@ -253,7 +253,7 @@ class ConversationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.chunks = build_index(load_documents(
-            FIXTURES / 'knowledge' / 'documents_ddragon.json'))
+            FIXTURES / 'rag' / 'documents_ddragon.json'))
 
     def setUp(self):
         self.db = conv.connect(Path(tempfile.mkdtemp()) / 'conv.db')
