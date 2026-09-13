@@ -40,8 +40,62 @@ python -m rag history
 | `prompt.py` | 근거에 문서 ID 와 출처를 붙여 프롬프트를 만듭니다 |
 | `gemini.py` | Gemini REST 호출. 표준 라이브러리만 씁니다 |
 | `conversation.py` | 대화를 SQLite 에 남깁니다 |
+| `api.py` | 입구 `answer_question`. 다른 모듈은 이것만 씁니다 |
+| `knowledge_source.py` | `knowledge.get_documents` 로 근거 자료를 받아 패치별로 한 번만 청크로 만듭니다 |
 | `pipeline.py` | 위 단계를 이어 상태를 정합니다 |
 | `__main__.py` | 결과를 눈으로 확인하는 도구입니다 |
+
+## 입구: `answer_question`
+
+`docs/interfaces.md` 의 초안을 따릅니다.
+
+```text
+rag.answer_question(질문, 패치, 선택적 분석 결과) -> 답변, 출처, 근거 부족 여부
+```
+
+```python
+from rag import answer_question
+
+result = answer_question('무한의 대검 언제 사?', '26.18')
+result['answer']                 # 답변 문장. 모델을 부르지 않았거나 실패했으면 None
+result['sources']                # 출처 목록 (doc_id, title, source_url, version)
+result['insufficient_evidence']  # 근거 자료가 없어 답하지 않았으면 True
+```
+
+rag 가 하는 일과 하지 않는 일을 나눕니다.
+
+| rag 가 함 | rag 가 하지 않음 |
+|---|---|
+| 안전장치, 청킹, 순위, 프롬프트, Gemini 호출, 대화 저장 | 자료 수집, DB 구조, 패치 번호와 Data Dragon 버전 대응 (knowledge) |
+| `knowledge.get_documents` 로 근거 받기 | 라이엇 API 호출 (riot). 분석 결과는 호출하는 쪽이 넘깁니다 |
+
+### 합의 전 가정과 임시로 정한 것
+
+팀과 정해야 하는 항목이라 코드에도 같은 내용을 적어 두었습니다.
+
+| 항목 | 지금 정한 것 |
+|---|---|
+| `get_documents(패치, 챔피언 또는 아이템)` 의 뜻 | **가정 B**: 종류로 읽습니다. `get_documents('26.18', 'item')` 은 그 패치의 아이템 문서 전체 |
+| 받는 종류 | `item`, `champion` 에 더해 초안에 없는 `rune`, `patch` 도 받습니다 |
+| 받는 문서 형식 | `tests/fixtures/rag/documents_ddragon.json` 의 문서 형식이라고 봅니다 |
+| 호출 횟수 | 같은 패치는 한 번만 받아 둡니다. 실패하면 저장하지 않고 다음 질문에서 다시 받습니다 |
+| 패치를 `None` 으로 부르면 | 최신 자료를 돌려준다고 봅니다 |
+| 자료가 없는 패치의 롤 질문 판정 | 안전장치의 이름 목록만 최신 자료에서 가져옵니다. 그러지 않으면 "근거 부족" 이 "롤 질문 아님" 으로 바뀝니다 |
+| 동기/비동기 | 동기 함수 |
+| 오류 표현 | 예외로 던지지 않고 `status` 와 `error` 로 돌려줍니다 |
+| 초안에 없는 출력 | `status`, `reason`, `message`, `error`, `usage` |
+| 분석 결과 모양 | `{'champion': 'Garen', 'playstyle': {'trade_preference': '지속', 'lane_aggression': '높음'}}` |
+
+`knowledge.get_documents` 가 아직 없어서, 기본으로 부르면 `status` 가 `knowledge_error` 로 돌아옵니다.
+테스트와 `python -m rag` 는 fixture 를 읽는 대역(`fixture_get_documents`)을 넣어서 씁니다.
+
+```python
+from rag import answer_question
+from rag.knowledge_source import DocumentSource, fixture_get_documents
+
+source = DocumentSource(fixture_get_documents())
+result = answer_question('무한의 대검 언제 사?', '26.18', source=source)
+```
 
 ## 상태 네 가지
 
@@ -136,10 +190,10 @@ python -m rag history
   fixture 가 500골드 이상 아이템만 담아 이름표에 없기 때문입니다. 하위 재료가 있는 165개 중 85개는 재료 이름이 일부 빠지고,
   49개는 재료 없이 `조합 비용` 만 나옵니다. 이름표에 없는 ID 는 숫자로 보이지 않게 일부러 뺍니다.
   `src/knowledge/` 수집기는 아이템을 가격 조건 없이 전부 저장하므로, 이름표를 그 데이터로 만들면 사라질 한계입니다.
-- 지금은 `tests/fixtures/rag/` 의 JSON 을 읽습니다. `src/knowledge/` 의 `records` 테이블로 바꿀 때 고칠 곳은
-  `store.load_documents` 한 곳이고, 필드 이름(`kind`, `entity_id`, `version`, `content_hash`, `updated_at`)도 맞춰 두었습니다.
+- 근거 자료는 `knowledge.get_documents` 로 받습니다. 그 함수가 아직 없어서 지금은 `tests/fixtures/rag/` 의 JSON 을 읽는 대역을 씁니다.
+  필드 이름(`kind`, `entity_id`, `version`, `content_hash`, `updated_at`)은 `src/knowledge/` 의 `records` 테이블과 맞춰 두었습니다.
   다만 `records` 에는 `text` 와 `fields` 가 없고 원본 JSON(`content`)만 있으므로,
-  원본을 풀어 이 구조로 만드는 변환 코드를 따로 짜야 합니다. 단순히 파일 경로만 바꾸면 되는 일은 아닙니다.
+  `get_documents` 가 이 문서 형식으로 풀어 주거나 rag 쪽에 변환 코드를 둬야 합니다. 어느 쪽이 할지는 합의가 필요합니다.
 
 ## 검증
 
@@ -205,6 +259,10 @@ python -m unittest discover -s tests/integration -p "test_rag*.py" -v
 
 ## 팀 확인 필요
 
-- `knowledge.get_documents` 가 아직 없습니다. `records` 를 직접 읽을지 합의가 필요합니다.
+- `get_documents(패치, 챔피언 또는 아이템)` 을 종류로 읽을지(가정 B), 이름으로 읽을지. 제안: `get_documents(패치, 종류, 이름=None)`
+- `get_documents` 가 `rune`, `patch` 종류도 돌려줄지
+- `get_documents` 가 돌려줄 문서 형식, 그리고 원본 JSON 을 누가 풀지
+- 동기/비동기 방식과 오류 표현, 초안에 없는 출력(`status` 등)을 계약에 넣을지
+- 분석 결과의 모양
 - 챔피언 상세 스킬이 `src/knowledge/` 수집 대상에 없습니다. 룬 추천 근거에 필요합니다.
 - 청킹을 `knowledge` 가 할지 `rag` 가 할지 정해야 합니다. 지금은 `rag` 가 합니다.

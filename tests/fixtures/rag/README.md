@@ -64,6 +64,10 @@ python tests/fixtures/rag/tools/build_ddragon_fixtures.py tests/fixtures/rag/doc
 이 스크립트는 fixture 생성용이며, 운영에서 쓸 자료 수집기가 아닙니다.
 실제 수집과 DB는 `src/knowledge/` 담당자가 관리합니다 (`docs/architecture.md`).
 
+**데이터 수집은 rag 담당의 몫이 아니므로 이 스크립트는 더 키우지 않습니다.**
+rag 는 이 fixture 를 `knowledge.get_documents` 의 대역으로만 씁니다 (`src/rag/knowledge_source.py`).
+knowledge 담당의 예시 fixture 가 나오면 스크립트와 조사 문서(`src/rag/DATA_DRAGON.md`)를 넘기거나 지우는 것을 함께 정합니다.
+
 ### 문서 형식
 
 `docs/interfaces.md`의 "자료에는 문서 ID, 기준 패치, 제목, 출처 URL을 연결한다"를 따릅니다.

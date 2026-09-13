@@ -12,10 +12,8 @@ from pathlib import Path
 
 from . import conversation as conv
 from .config import load_env
+from .knowledge_source import DEFAULT_FIXTURE, DocumentSource, fixture_get_documents
 from .pipeline import answer
-from .store import build_index, load_documents
-
-DEFAULT_FIXTURE = Path('tests/fixtures/rag/documents_ddragon.json')
 
 LABELS = {
     'off_topic': '차단 (롤 질문 아님)',
@@ -90,9 +88,15 @@ def main():
         print('문서 파일이 없습니다: %s' % args.documents, file=sys.stderr)
         return 1
 
-    chunks = build_index(load_documents(args.documents))
+    # 실제 입구와 같은 길로 문서를 받는다. knowledge.get_documents 대신 fixture 대역을 쓴다.
+    source = DocumentSource(fixture_get_documents(args.documents))
+    chunks = source.chunks(args.patch)
+    if not chunks:
+        print('패치 %s 의 근거 자료가 없습니다: %s' % (args.patch, args.documents))
 
     if args.command == 'stats':
+        if not chunks:
+            return 0
         counts = {}
         for chunk in chunks:
             counts[chunk['kind']] = counts.get(chunk['kind'], 0) + 1
@@ -131,7 +135,8 @@ def main():
                  'conversation_id': conv.new_conversation_id()}
 
     outcome = answer(chunks, args.question, analysis or None, patch=args.patch,
-                     top_k=args.top, generate=generate, store=store)
+                     top_k=args.top, generate=generate, store=store,
+                     name_chunks=source.name_chunks(args.patch))
 
     if store is not None:
         store['db'].close()

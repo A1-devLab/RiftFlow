@@ -1,9 +1,8 @@
 """근거 문서를 읽어 검색 단위인 청크로 자른다.
 
-지금은 tests/fixtures 의 JSON 을 읽는다.
-나중에 src/knowledge/ 의 records 테이블로 바꿀 때 load_documents 만 교체하면 되도록
-문서의 필드 이름을 records 테이블과 같게 맞춰 두었다.
-(kind, entity_id, version, content_hash, updated_at)
+문서는 knowledge.get_documents 로 받는다 (knowledge_source.py). 여기서는 받은 문서를 자르기만 한다.
+load_documents 는 fixture 파일을 통째로 읽는 도구로, 테스트에서만 쓴다.
+문서의 필드 이름(kind, entity_id, version, content_hash, updated_at)은 records 테이블과 같게 맞춰 두었다.
 
 패치 노트는 문서 하나가 수천 자라 통째로 프롬프트에 넣을 수 없다.
 그래서 문서를 청크로 자르고, 검색과 인용은 청크 단위로 한다.
