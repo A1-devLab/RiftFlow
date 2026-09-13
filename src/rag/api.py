@@ -5,8 +5,13 @@
 
 합의 전 임시로 정한 것 (docs/interfaces.md '합의할 사항' 에 따라 팀과 정해야 함)
 - 근거 자료는 knowledge.get_documents(patch, 종류) 로 종류별 전체를 받는다 (가정 B, knowledge_source.py).
-- 동기 함수다.
-- 오류는 예외로 던지지 않고 status 와 error 로 돌려준다.
+- 동기 함수다. 결과가 올 때까지 부른 쪽이 멈춘다.
+  Gemini 호출은 최악이면 186초다 (제한시간 60초 x 3번 시도 + 재시도 대기 2초, 4초).
+  화면이 같은 흐름에서 부르면 그동안 화면이 멈춘다.
+- 오류 표현: 근거 자료 받기와 모델 호출에서 난 오류만 잡아 status 와 error 로 돌려준다.
+  그 밖에서 난 오류(대화 저장 실패 등)는 예외로 그대로 나온다.
+  두 곳은 잡는 범위가 넓어서 코드 버그도 knowledge_error, model_error 로 보인다.
+  호출 한도 초과(429)의 retry_after 와 HTTP 상태 코드는 결과에 담기지 않는다.
 - status, reason, message, error, usage 는 초안에 없는 추가 정보다.
 - analysis 의 모양({'champion': ..., 'playstyle': {...}})도 합의되지 않았다.
 
