@@ -1,4 +1,4 @@
-# 샘플 데이터
+# rag 샘플 데이터
 
 **대상 범위는 소환사의 협곡(맵 11)입니다.** 칼바람나락과 아레나는 범위 밖입니다.
 같은 이름의 아이템이 모드별로 다른 ID, 다른 골드, 다른 능력치를 가지므로 섞으면 틀린 근거가 됩니다.
@@ -9,12 +9,20 @@
 ## 폴더
 
 ```text
-rag/         rag 담당(이찬영)이 만들고 rag 테스트만 쓰는 샘플
-             documents_ddragon.json  근거 자료 목록
-             documents_empty.json    검색 결과 없음
-             questions.json          챗봇 질문과 검증 조건
-tools/       fixture 생성 스크립트
+tests/fixtures/rag/
+  README.md                         이 문서
+  documents_ddragon.json            근거 자료 목록
+  documents_empty.json              검색 결과 없음
+  questions.json                    챗봇 질문과 검증 조건
+  tools/build_ddragon_fixtures.py   근거 자료 생성 스크립트
 ```
+
+rag 담당이 만들고 rag 테스트만 쓰는 파일은 모두 이 폴더에 둡니다. `tests/fixtures/` 바로 아래에는 두지 않습니다.
+다른 담당자의 fixture 와 섞여 이 문서나 스크립트가 공용처럼 보이지 않게 하려는 것입니다.
+
+테스트 코드는 `tests/integration/test_rag_*.py` 에 있습니다.
+knowledge 담당의 `test_knowledge.py` 와 같은 방식이고, `tests` 아래에 `__init__.py` 가 없어
+하위 폴더로 옮기면 `unittest discover` 가 찾지 못하기 때문에 그대로 둡니다.
 
 근거 자료는 knowledge 모듈이 돌려줄 결과를 흉내 낸 것이지만 `knowledge/` 폴더에 두지 않습니다.
 
@@ -27,7 +35,7 @@ knowledge 의 실제 출력 형식이 정해지면 그 담당자가 자기 예�
 파일을 폴더로 나눌지 `knowledge_patch.html` 처럼 이름 앞에 모듈명을 붙일지는 팀 규칙이 아직 없습니다.
 지금은 두 방식이 섞여 있으니 합의 후 한쪽으로 맞춥니다.
 
-## 근거 자료 (`rag/documents_ddragon.json`)
+## 근거 자료 (`documents_ddragon.json`)
 
 **Riot Games Data Dragon의 실제 데이터**입니다. 지어낸 수치가 아닙니다.
 Data Dragon은 공개 정적 데이터라 API 키가 필요 없고 개인정보가 들어가지 않습니다.
@@ -47,7 +55,7 @@ Data Dragon은 공개 정적 데이터라 API 키가 필요 없고 개인정보�
 재생성:
 
 ```bash
-python tests/fixtures/tools/build_ddragon_fixtures.py tests/fixtures/rag/documents_ddragon.json
+python tests/fixtures/rag/tools/build_ddragon_fixtures.py tests/fixtures/rag/documents_ddragon.json
 ```
 
 항상 최신 패치를 받아오므로 결과의 `patch` 값과 `doc_id` 접미사가 바뀝니다.

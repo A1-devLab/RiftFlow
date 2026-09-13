@@ -19,7 +19,7 @@ PARTICLES = ('으로는', '에서는', '에게는', '으로', '에서', '에게'
              '에', '의', '도', '만', '와', '과', '로')
 
 # 질문에 나오는 표현을 situation_tags 값으로 잇는다.
-# tests/fixtures/tools/build_ddragon_fixtures.py 의 SITUATION_OVERLAY 와 짝을 이룬다.
+# tests/fixtures/rag/tools/build_ddragon_fixtures.py 의 SITUATION_OVERLAY 와 짝을 이룬다.
 SITUATION_KEYWORDS = {
     '상대CC많음': ['단일 대상 궁극기', '단일대상', '궁극기가 많', 'cc', '씨씨', '군중 제어',
                 '군중제어', '잡히면', '묶이', '기절', '에어본'],
