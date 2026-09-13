@@ -54,7 +54,7 @@ Data Dragon은 공개 정적 데이터라 API 키가 필요 없고 개인정보�
 
 재생성:
 
-```bash
+```powershell
 python tests/fixtures/rag/tools/build_ddragon_fixtures.py tests/fixtures/rag/documents_ddragon.json
 ```
 

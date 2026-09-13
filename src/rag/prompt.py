@@ -73,13 +73,20 @@ def name_map(chunks):
 
 
 def named(ids, names):
-    return ', '.join(names.get(entity_id, entity_id) for entity_id in ids)
+    """ID 목록을 이름 목록으로 바꾼다. 이름표에 없는 ID 는 뺀다.
+
+    원본 into 에는 667666 같은 모드 전용 사본 ID 가 섞여 있다.
+    fixture 에서 뺀 아이템이라 이름표에 없는데, 그대로 두면 숫자 ID 가 프롬프트에 들어가
+    '숫자 ID 를 보여 주지 않는다' 는 지시와 달리 모델이 사용자에게 보여 줄 수 있다.
+    """
+    return [names[entity_id] for entity_id in ids if entity_id in names]
 
 
 def render_fields(chunk, names=None):
     """수치 정보를 한 줄로 적는다.
 
-    Data Dragon 설명문에는 가격도 조합식도 없다. fields 에만 있다.
+    Data Dragon 의 description 에는 가격도 조합식도 없고 gold, from, into 필드에 따로 있다.
+    생성 스크립트가 이를 fields 로 옮긴다 (gold_total, gold_base, builds_from, builds_into).
     이것을 빼면 모델이 '가격 정보가 없어 답할 수 없다' 고 답한다. 실제로 그랬다.
     """
     fields = chunk.get('fields') or {}
@@ -88,10 +95,16 @@ def render_fields(chunk, names=None):
     if chunk['kind'] == 'item':
         if fields.get('gold_total') is not None:
             parts.append('가격 %d골드' % fields['gold_total'])
-        if fields.get('builds_from'):
-            parts.append('하위 재료 %s' % named(fields['builds_from'], names or {}))
-        if fields.get('builds_into'):
-            parts.append('상위 아이템 %s' % named(fields['builds_into'], names or {}))
+        materials = named(fields.get('builds_from') or [], names or {})
+        if materials:
+            parts.append('하위 재료 %s' % ', '.join(materials))
+        # 조합 비용은 하위 재료를 다 모은 뒤 더 내는 금액이다. 골드가 모자랄 때의 선택을 말하려면 필요하다.
+        # 재료가 없는 기본 아이템은 이 값이 가격과 같아서 적지 않는다.
+        if fields.get('builds_from') and fields.get('gold_base') is not None:
+            parts.append('조합 비용 %d골드' % fields['gold_base'])
+        upgrades = named(fields.get('builds_into') or [], names or {})
+        if upgrades:
+            parts.append('상위 아이템 %s' % ', '.join(upgrades))
         if fields.get('purchasable') is False:
             parts.append('직접 구매 불가')
     elif chunk['kind'] == 'rune':

@@ -62,6 +62,11 @@ def save(db, conversation_id, question, outcome, prompt=None, reply=None,
     어떤 질문이 왜 막혔는지 나중에 봐야 안전장치를 고칠 수 있다.
     """
     usage = (reply or {}).get('usage') or {}
+    # 모델을 부르지 않았으면 토큰을 쓰지 않은 것이 확실하다. 0 으로 남긴다.
+    # 부르려다 실패했거나 응답에 사용량이 없으면 얼마나 썼는지 모른다. None 으로 남긴다.
+    # 둘을 섞으면 '안 썼다' 와 '모른다' 가 구분되지 않는다. (docs/interfaces.md: 누락값과 0 구분)
+    if not outcome.get('model_called'):
+        usage = {'prompt_tokens': 0, 'output_tokens': 0, 'total_tokens': 0}
     turn = next_turn(db, conversation_id)
     with db:
         db.execute('INSERT INTO turns VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (
@@ -96,8 +101,14 @@ def history(db, conversation_id):
 
 
 def stats(db):
-    """상태별 건수와 토큰 사용량. 안전장치가 실제로 토큰을 아꼈는지 본다."""
+    """상태별 건수와 토큰 사용량. 안전장치가 실제로 토큰을 아꼈는지 본다.
+
+    tokens 는 알려진 사용량의 합이다. 하나도 모르면 None 이다. 0 으로 채우지 않는다.
+    tokens_unknown 은 사용량을 모르는 행의 수다.
+    """
     rows = db.execute(
-        'SELECT status, COUNT(*), COALESCE(SUM(total_tokens), 0) '
+        'SELECT status, COUNT(*), SUM(total_tokens), '
+        'SUM(CASE WHEN total_tokens IS NULL THEN 1 ELSE 0 END) '
         'FROM turns GROUP BY status ORDER BY COUNT(*) DESC').fetchall()
-    return [{'status': r[0], 'count': r[1], 'tokens': r[2]} for r in rows]
+    return [{'status': r[0], 'count': r[1], 'tokens': r[2], 'tokens_unknown': r[3]}
+            for r in rows]

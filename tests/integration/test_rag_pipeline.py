@@ -5,6 +5,8 @@
 """
 import io
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -18,7 +20,7 @@ from rag import conversation as conv  # noqa: E402
 from rag.config import parse  # noqa: E402
 from rag.gemini import GeminiError, build_request, generate, read_text  # noqa: E402
 from rag.pipeline import answer, prepare  # noqa: E402
-from rag.prompt import build  # noqa: E402
+from rag.prompt import build, name_map, render_fields  # noqa: E402
 from rag.store import build_index, load_documents  # noqa: E402
 
 FIXTURES = ROOT / 'tests' / 'fixtures'
@@ -112,6 +114,25 @@ class PromptTest(unittest.TestCase):
         evidence = prepare(chunks, '무한의 대검 언제 사?')['evidence']
         prompt = build('무한의 대검 언제 사?', evidence)
         self.assertIn('3500골드', prompt['user'])
+
+    def test_item_ids_without_a_name_do_not_reach_the_prompt(self):
+        """원본 into 에는 667666 같은 모드 전용 사본 ID 가 섞여 있다. 숫자 그대로 넣지 않는다."""
+        names = name_map(self.chunks)
+        pickaxe = [chunk for chunk in self.chunks if chunk['entity_id'] == '1037'][0]
+        unknown = [i for i in pickaxe['fields']['builds_into'] if i not in names]
+        self.assertTrue(unknown, '사본 ID 가 섞인 아이템으로 검사해야 의미가 있다')
+        line = render_fields(pickaxe, names)
+        for entity_id in pickaxe['fields']['builds_into']:
+            self.assertNotIn(entity_id, line)
+        self.assertIn('무한의 대검', line)
+
+    def test_combine_cost_is_shown_only_for_built_items(self):
+        names = name_map(self.chunks)
+        by_id = {chunk['entity_id']: chunk for chunk in self.chunks if chunk['kind'] == 'item'}
+        infinity = render_fields(by_id['3031'], names)
+        self.assertIn('하위 재료 B.F. 대검, 곡괭이, 민첩성의 망토', infinity)
+        self.assertIn('조합 비용 725골드', infinity)
+        self.assertNotIn('조합 비용', render_fields(by_id['1038'], names))
 
     def test_playstyle_context_is_written(self):
         analysis = {'champion': 'Garen', 'playstyle': {'trade_preference': '지속'}}
@@ -296,6 +317,28 @@ class ConversationTest(unittest.TestCase):
         self.assertTrue(json.loads(row[3]))
         self.assertTrue(json.loads(row[4]))
 
+    def test_tokens_distinguish_not_used_from_unknown(self):
+        """부르지 않은 질문은 0, 부르려다 실패한 질문은 null 이다. 누락값을 0 으로 채우지 않는다."""
+        def broken(prompt):
+            raise GeminiError('모델이 지금 혼잡합니다.', status=503)
+
+        answer(self.chunks, '점심 뭐 먹지', generate=broken, store=self.store)
+        answer(self.chunks, QUESTION, generate=broken, store=self.store)
+        by_status = {row['status']: row for row in conv.stats(self.db)}
+
+        self.assertEqual(by_status['off_topic']['tokens'], 0)
+        self.assertEqual(by_status['off_topic']['tokens_unknown'], 0)
+        self.assertIsNone(by_status['model_error']['tokens'])
+        self.assertEqual(by_status['model_error']['tokens_unknown'], 1)
+
+    def test_prompt_only_spends_no_tokens(self):
+        """--call 없이 프롬프트만 만든 경우는 모델을 부르지 않았으므로 0 이다."""
+        answer(self.chunks, QUESTION, store=self.store)
+        row = conv.stats(self.db)[0]
+        self.assertEqual(row['status'], 'ready')
+        self.assertEqual(row['tokens'], 0)
+        self.assertEqual(row['tokens_unknown'], 0)
+
     def test_model_failure_is_recorded(self):
         def broken(prompt):
             raise GeminiError('호출 한도를 넘었습니다.', status=429)
@@ -310,6 +353,59 @@ class ConversationTest(unittest.TestCase):
         self.assertEqual(result['status'], 'ready')
         self.assertIsNone(result['answer'])
         self.assertTrue(result['prompt'])
+
+
+class CliTest(unittest.TestCase):
+    """python -m rag 의 저장 기본값과 history 표시. Gemini 를 부르지 않는 질문만 쓴다."""
+
+    def setUp(self):
+        self.workdir = Path(tempfile.mkdtemp())
+
+    def run_cli(self, *args):
+        env = dict(os.environ, PYTHONPATH=str(ROOT / 'src'), PYTHONIOENCODING='utf-8')
+        env.pop('GEMINI_API_KEY', None)
+        return subprocess.run(
+            [sys.executable, '-m', 'rag'] + list(args)
+            + ['--documents', str(FIXTURES / 'rag' / 'documents_ddragon.json')],
+            cwd=str(self.workdir), env=env, capture_output=True, text=True, encoding='utf-8')
+
+    def test_conversation_is_saved_by_default(self):
+        """챗봇 규약: 데이터는 전부 저장한다."""
+        result = self.run_cli('ask', '점심 뭐 먹지')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        path = self.workdir / 'data' / 'conversations.db'
+        self.assertTrue(path.exists())
+        db = conv.connect(path)
+        try:
+            self.assertEqual(conv.stats(db)[0]['count'], 1)
+        finally:
+            db.close()
+
+    def test_no_save_leaves_nothing(self):
+        result = self.run_cli('ask', '점심 뭐 먹지', '--no-save')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((self.workdir / 'data' / 'conversations.db').exists())
+
+    def test_history_prints_null_not_zero_for_unknown_tokens(self):
+        path = self.workdir / 'data' / 'conversations.db'
+        db = conv.connect(path)
+        try:
+            chunks = build_index(load_documents(FIXTURES / 'rag' / 'documents_ddragon.json'))
+            store = {'db': db, 'conversation_id': conv.new_conversation_id()}
+
+            def broken(prompt):
+                raise GeminiError('모델이 지금 혼잡합니다.', status=503)
+
+            answer(chunks, QUESTION, generate=broken, store=store)
+            answer(chunks, '점심 뭐 먹지', store=store)
+        finally:
+            db.close()
+
+        result = self.run_cli('history')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = {line.split()[0]: line for line in result.stdout.splitlines() if line.startswith('  ')}
+        self.assertIn('토큰 null', lines['모델'])
+        self.assertIn('토큰 0', lines['차단'])
 
 
 if __name__ == '__main__':

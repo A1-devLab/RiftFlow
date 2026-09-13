@@ -78,6 +78,10 @@ def answer(chunks, question, analysis=None, patch=None, top_k=5,
                 error = getattr(failure, 'message', str(failure))
                 outcome = dict(outcome, status='model_error', message=error)
 
+    # calls_model 은 '부를 조건이 된다' 는 뜻이고, 이것은 '실제로 불렀다' 는 뜻이다.
+    # 프롬프트만 만들고 멈춘 경우는 토큰을 쓰지 않았으므로 둘을 나눈다.
+    outcome = dict(outcome, model_called=bool(outcome['calls_model'] and generate is not None))
+
     if store is not None:
         from .conversation import save
         save(store['db'], conversation_id or store['conversation_id'],

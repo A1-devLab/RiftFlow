@@ -11,17 +11,22 @@ Gemini 를 실제로 부를 때만 `GEMINI_API_KEY` 가 필요합니다. 그 전
 
 ## 실행
 
-```sh
+VS Code 터미널(PowerShell)에서 저장소 루트 기준으로 실행합니다.
+설치하지 않았다면 새 터미널마다 첫 줄을 한 번 실행합니다.
+
+```powershell
+$env:PYTHONPATH = "src"
 python -m rag stats
 python -m rag ask "상대 팀에 단일 대상 궁극기가 많은데 뭘 올려야 하나요?" --patch 26.18
 python -m rag ask "계속 붙어서 싸우는데 핵심 룬 뭐 들죠?" --champion Garen --trade 지속
-python -m rag ask "무한의 대검 언제 올려요?" --call --save data/conversations.db
+python -m rag ask "무한의 대검 언제 올려요?" --call --patch 26.18
+python -m rag history
 ```
 
 기본은 프롬프트까지만 만들고 멈춥니다. `--call` 을 주어야 Gemini 를 부릅니다.
 `--show-prompt` 로 보낼 내용을 그대로 볼 수 있습니다.
 
-PowerShell에서 설치 없이 실행하려면 `$env:PYTHONPATH="src"` 를 먼저 설정합니다.
+대화는 기본으로 `data/conversations.db` 에 남습니다. 남기지 않으려면 `--no-save` 를 줍니다.
 
 ## 구성
 
@@ -125,13 +130,18 @@ PowerShell에서 설치 없이 실행하려면 `$env:PYTHONPATH="src"` 를 먼�
 - **정답이 외부에서 검증되지 않았습니다.** `questions.json` 의 `must_cite_doc_ids` 는 RiftFlow 가 정한 값입니다.
   문서 내용은 Data Dragon 의 실제 값이지만, 어떤 문서가 그 질문의 정답인지는 판단입니다.
   롤을 직접 하는 사람이 검토해야 합니다.
-- 지금은 `tests/fixtures` 의 JSON 을 읽습니다.
-  `src/knowledge/` 의 `records` 테이블로 바꿀 때 `store.load_documents` 만 교체하면 되도록
-  필드 이름(`kind`, `entity_id`, `version`, `content_hash`, `updated_at`)을 맞춰 두었습니다.
+- **500골드 미만 기본 재료(롱소드, 증폭의 고서, 루비 수정 등)는 하위 재료 목록에 나오지 않습니다.**
+  fixture 가 500골드 이상 아이템만 담아 이름표에 없기 때문입니다. 하위 재료가 있는 165개 중 85개는 재료 이름이 일부 빠지고,
+  49개는 재료 없이 `조합 비용` 만 나옵니다. 이름표에 없는 ID 는 숫자로 보이지 않게 일부러 뺍니다.
+  `src/knowledge/` 수집기는 아이템을 가격 조건 없이 전부 저장하므로, 이름표를 그 데이터로 만들면 사라질 한계입니다.
+- 지금은 `tests/fixtures/rag/` 의 JSON 을 읽습니다. `src/knowledge/` 의 `records` 테이블로 바꿀 때 고칠 곳은
+  `store.load_documents` 한 곳이고, 필드 이름(`kind`, `entity_id`, `version`, `content_hash`, `updated_at`)도 맞춰 두었습니다.
+  다만 `records` 에는 `text` 와 `fields` 가 없고 원본 JSON(`content`)만 있으므로,
+  원본을 풀어 이 구조로 만드는 변환 코드를 따로 짜야 합니다. 단순히 파일 경로만 바꾸면 되는 일은 아닙니다.
 
 ## 검증
 
-```sh
+```powershell
 python -m unittest discover -s tests/integration -p "test_rag*.py" -v
 ```
 
@@ -156,8 +166,20 @@ python -m unittest discover -s tests/integration -p "test_rag*.py" -v
 
 ## 대화 저장
 
+**기본으로 켜져 있습니다.** 챗봇 규약이 "데이터는 전부 저장" 이라서입니다. 한 번만 빼려면 `--no-save` 를 줍니다.
+
 `data/conversations.db` 에 남깁니다. `.gitignore` 가 `/data/*` 를 제외하므로 Git 에 올라가지 않습니다.
 질문에 Riot ID 같은 개인정보가 섞일 수 있어 저장소에 올리면 안 됩니다.
+
+토큰 칼럼은 "안 썼다" 와 "모른다" 를 구분합니다 (`docs/interfaces.md` 의 누락값과 0 구분).
+
+| 경우 | 토큰 값 |
+|---|---|
+| Gemini 를 부르지 않음 (차단, 범위 밖, 근거 부족, `--call` 없이 프롬프트만) | `0` |
+| 불러서 응답에 사용량이 옴 | 실제 값 |
+| 부르려다 실패했거나 사용량이 오지 않음 | `null` |
+
+`python -m rag history` 가 상태별 건수와 토큰 합계를 보여 줍니다. 모르는 값은 0 으로 채우지 않고 `null` 로 표시합니다.
 
 챗봇 규약에 따라 **다른 챗봇 API 로 바꿀 수 있도록** 보낸 프롬프트까지 그대로 남깁니다.
 `provider` 와 `model` 은 칼럼이라 Gemini 에 묶이지 않습니다.
