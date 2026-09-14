@@ -11,3 +11,19 @@ Figma 링크, 화면 그림, 사용자 흐름 문서를 이 폴더에서 관리�
 
 각 화면에서 필요한 입력 데이터와 사용자 동작을 함께 기록합니다.
 
+담당 : 박선제
+
+notion에 대략적인 프로그램 구성 글을 작성하고 figma를 이용하여 ui 배치도를 만들었습니다.
+
+notion : 대략적인 프로그램 구성 글
+
+figma : 버튼, 텍스트 등 기초적인 ui 배치도
+
+
+<img width="3400" height="1503" alt="RiftFlow" src="https://github.com/user-attachments/assets/0345230b-643d-4132-847b-6a1c1447a0a8" />
+
+▲ figma 디자인 이미지
+
+[원본 figma 디자인 링크] >>> https://www.figma.com/design/8iKnRhgFm01AkdTHvGRIk6/RiftFlow?node-id=0-1&t=yJKoQJt1XgQnQT0j-1
+
+[notion 링크] >>> https://dashing-pasta-fc2.notion.site/3d6f01d85147806f9a6ac813085e586f
