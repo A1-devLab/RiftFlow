@@ -9,6 +9,7 @@ get_documents 는 '종류별 전체를 돌려준다' 는 합의 전 가정(B)으
 import inspect
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -147,10 +148,12 @@ class AnswerQuestionTest(unittest.TestCase):
     def test_missing_knowledge_module_is_reported(self):
         """knowledge.get_documents 가 아직 없으면 오류 상태로 알려 준다. 예외로 멈추지 않는다."""
         import rag.api
+        from rag.knowledge_source import KnowledgeUnavailable
         saved = rag.api._default_source
         rag.api._default_source = None
         try:
-            result = rag.answer_question(QUESTION, '26.18')
+            with patch('rag.api.knowledge_get_documents', side_effect=KnowledgeUnavailable('knowledge.get_documents 없음')):
+                result = rag.answer_question(QUESTION, '26.18')
         finally:
             rag.api._default_source = saved
         self.assertEqual(result['status'], 'knowledge_error')
