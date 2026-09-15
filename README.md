@@ -37,6 +37,15 @@ python -m pip install -e .
 python -m ui
 ```
 
+터미널에서 실제 로컬 DB에 바로 질문할 수도 있습니다.
+
+```bash
+python -m ui.ask "무한의 대검 가격과 조합 재료를 알려줘"
+python -m ui.ask --local "무한의 대검 가격과 조합 재료를 알려줘"
+```
+
+첫 번째 명령은 DB 검색 후 Gemini까지 호출하고, `--local`은 API 사용 없이 검색 근거만 보여 줍니다.
+
 설치 후 `riftflow`로도 실행할 수 있습니다. 저장소 루트에서 실행하세요.
 설치 없이 이미 PySide6가 있는 환경에서는 `PYTHONPATH=src python -m ui`로 실행 가능합니다.
 최종 대상은 Windows이며 현재 통합 검증은 macOS 및 Qt offscreen 환경에서 수행했습니다.
