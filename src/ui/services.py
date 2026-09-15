@@ -31,11 +31,15 @@ def sync_database(path):
         db.close()
 
 
-def ask_database(path, question, version=None, *, generate=None):
+def ask_database(path, question, version=None, *, generate=None, analysis=None,
+                 prompt_builder=None):
     # Fresh source per question: same-version hotfix updates must invalidate retrieval.
     source = DocumentSource(partial(get_documents, db_path=path))
     chunks = source.chunks(version)
-    result = answer(chunks, question, patch=version, generate=generate,
-                    name_chunks=source.name_chunks(version))
+    options = {}
+    if prompt_builder is not None:
+        options["prompt_builder"] = prompt_builder
+    result = answer(chunks, question, analysis=analysis, patch=version, generate=generate,
+                    name_chunks=source.name_chunks(version), **options)
     result["generated"] = result["answer"] is not None
     return result

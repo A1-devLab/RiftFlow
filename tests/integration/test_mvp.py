@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from knowledge.collector import connect, save
 from knowledge.documents import get_documents
+from game_phases.before_game.prompt import SYSTEM as BEFORE_SYSTEM, build as build_before
 from ui.services import ask_database, create_demo
 
 
@@ -61,6 +62,26 @@ class DesktopIntegrationTests(unittest.TestCase):
         self.assertTrue(result['generated'])
         self.assertEqual(len(calls), 1)
         self.assertTrue(result['sources'])
+
+    def test_before_game_uses_its_own_prompt_and_context(self):
+        create_demo(self.path)
+        analysis = {'champion': '아리', 'opponent': '가렌',
+                    'playstyle': {'trade_preference': '순간',
+                                  'lane_aggression': '공격적'}}
+        result = ask_database(self.path, '아리 룬을 추천해줘', analysis=analysis,
+                              prompt_builder=build_before)
+        self.assertEqual(result['status'], 'ready')
+        self.assertEqual(result['prompt']['system'], BEFORE_SYSTEM)
+        self.assertIn('상대 챔피언: 가렌', result['prompt']['user'])
+        self.assertIn('선호하는 라인전: 공격적', result['prompt']['user'])
+
+    def test_selected_short_champion_establishes_before_game_context(self):
+        create_demo(self.path)
+        result = ask_database(self.path, '룬과 초반 운영 추천',
+                              analysis={'champion': '아리'},
+                              prompt_builder=build_before)
+        self.assertEqual(result['status'], 'ready')
+        self.assertEqual(result['reason'], '선택된 챔피언: 아리')
 
     def test_other_map_item_filtered(self):
         db = connect(self.path)

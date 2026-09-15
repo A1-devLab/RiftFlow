@@ -103,7 +103,7 @@ def looks_like_lol(question, names):
     return None
 
 
-def check(question, chunks=None):
+def check(question, chunks=None, context=None):
     """질문을 판정한다. Gemini 를 부르기 전에 실행한다."""
     if not question or not question.strip():
         return {'decision': 'off_topic', 'reason': '빈 질문',
@@ -114,6 +114,15 @@ def check(question, chunks=None):
     if mode:
         return {'decision': 'out_of_scope', 'reason': '다른 모드: ' + mode,
                 'message': MESSAGES['out_of_scope'] % mode}
+
+    # 픽창/게임 전 화면에서 프로그램이 받은 챔피언은 사용자가 쓴 자유 텍스트보다
+    # 강한 맥락이다. 아리처럼 두 글자인 챔피언도 실제 DB 이름과 정확히 일치하면 허용한다.
+    champion = (context or {}).get('champion')
+    champion_names = {chunk['subject_name'].lower() for chunk in chunks or []
+                      if chunk.get('kind') == 'champion'}
+    if champion and champion.strip().lower() in champion_names:
+        return {'decision': 'allow', 'reason': '선택된 챔피언: ' + champion.strip(),
+                'message': None}
 
     evidence = looks_like_lol(question, entity_names(chunks))
     if not evidence:

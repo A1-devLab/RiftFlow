@@ -16,7 +16,10 @@
 
 - riot → 공통 경기 데이터 → 분석 또는 UI
 - knowledge → 근거 자료 → rag → 답변과 출처 → UI
-- 실행 진입점과 설정 파일은 통합 구현 시 추가합니다.
+- `test.py` → `game_phases` → 공통 DB/RAG/Gemini 연결
+- `before_game` → 게임 전 전용 프롬프트와 사용자 성향
+- `in_game` → 현재 구현된 일반 RAG 질문
+- `after_game` → 향후 MATCH-V5 경기 분석
 
 각 모듈은 담당 기능에 필요한 로직과 문서를 관리합니다.
 DB 구조는 knowledge 담당자가 관리하며 RAG에서는 합의한 조회 기능을 이용합니다.
@@ -24,4 +27,5 @@ DB 구조는 knowledge 담당자가 관리하며 RAG에서는 합의한 조회 �
 
 ## 현재 상태
 
-협업용 뼈대만 생성했습니다. 라이엇 연결, DB, RAG, GUI는 미구현입니다.
+자료 수집 DB, RAG, Gemini 호출, 데스크톱 MVP와 단계별 터미널 UI가 구현되어 있습니다.
+Riot 제품은 승인됐지만 전적 API 호출과 클라이언트 게임 상태 감지는 아직 연결하지 않았습니다.

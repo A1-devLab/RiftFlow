@@ -1,7 +1,7 @@
 # RiftFlow
 
 공식 게임 자료에서 선택의 이유를 찾는 League of Legends 데스크톱 MVP.
-Python 3.11+ / PySide6. 현재는 비공개 팀 개발용이며 API 신청·승인을 받은 상태를 의미하지 않습니다.
+Python 3.11+ / PySide6. 현재는 비공개 팀 개발용이며 Riot Personal API 제품이 승인된 상태입니다.
 
 ## 구현된 기능
 
@@ -45,6 +45,14 @@ python -m ui.ask --local "무한의 대검 가격과 조합 재료를 알려줘"
 ```
 
 첫 번째 명령은 DB 검색 후 Gemini까지 호출하고, `--local`은 API 사용 없이 검색 근거만 보여 줍니다.
+
+게임 단계별 임시 터미널 UI는 저장소 루트에서 실행합니다.
+
+```bash
+python test.py
+```
+
+`1. before game`은 챔피언, 상대 챔피언, 딜교환·라인전 성향을 받아 게임 전 전용 프롬프트로 답합니다. `2. in game`은 기존 RAG 질문 기능이며, `3. after game`은 MATCH-V5 연동 전 안내 화면입니다.
 
 설치 후 `riftflow`로도 실행할 수 있습니다. 저장소 루트에서 실행하세요.
 설치 없이 이미 PySide6가 있는 환경에서는 `PYTHONPATH=src python -m ui`로 실행 가능합니다.
@@ -104,6 +112,7 @@ python -m unittest discover -s tests/integration -v
 ## 협업 문서
 
 - `docs/interfaces.md`: 실제 DB/RAG 연결 규격
+- `docs/game-phases.md`: 단계별 폴더와 게임 전 프롬프트 수정 위치
 - `docs/riot-application.md`: 라이엇 Personal Key 신청용 문안·실행 순서
 - `docs/ui/README.md`: 박선제의 원본 설계 자료
 

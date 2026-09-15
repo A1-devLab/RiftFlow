@@ -27,7 +27,7 @@ def prepare(chunks, question, analysis=None, top_k=5, name_chunks=None):
     요청한 패치의 자료가 비어 있으면 이름 목록도 비어서, '무한의 대검 언제 사?' 같은 롤 질문이
     '롤 질문 아님' 으로 막힌다. 근거 부족과 주제 이탈을 구분하려면 이름 목록은 따로 받아야 한다.
     """
-    verdict = check(question, name_chunks if name_chunks is not None else chunks)
+    verdict = check(question, name_chunks if name_chunks is not None else chunks, analysis)
     if verdict['decision'] != 'allow':
         return {
             'status': verdict['decision'],
@@ -60,7 +60,8 @@ def prepare(chunks, question, analysis=None, top_k=5, name_chunks=None):
 
 
 def answer(chunks, question, analysis=None, patch=None, top_k=5,
-           generate=None, store=None, conversation_id=None, provider='gemini', name_chunks=None):
+           generate=None, store=None, conversation_id=None, provider='gemini', name_chunks=None,
+           prompt_builder=build):
     """질문 하나를 끝까지 처리한다.
 
     generate 를 넣지 않으면 프롬프트만 만들고 모델을 부르지 않는다.
@@ -73,8 +74,8 @@ def answer(chunks, question, analysis=None, patch=None, top_k=5,
     prompt = reply = error = None
 
     if outcome['calls_model']:
-        prompt = build(question, outcome['evidence'], analysis, patch,
-                       names=name_map(chunks))
+        prompt = prompt_builder(question, outcome['evidence'], analysis, patch,
+                                names=name_map(chunks))
         if generate is not None:
             try:
                 reply = generate(prompt)
