@@ -52,7 +52,7 @@ python -m ui.ask --local "무한의 대검 가격과 조합 재료를 알려줘"
 python test.py
 ```
 
-`1. before game`은 챔피언, 상대 챔피언, 딜교환·라인전 성향을 받아 게임 전 전용 프롬프트로 답합니다. `2. in game`은 기존 RAG 질문 기능이며, `3. after game`은 MATCH-V5 연동 전 안내 화면입니다.
+`1. before game`은 챔피언, 상대 챔피언, 딜교환·라인전 성향을 받아 게임 전 전용 프롬프트로 답합니다. `2. in game`은 기존 RAG 질문 기능이며, `3. after game`은 MATCH-V5 연동 전 안내 화면입니다. `4. out game`은 현재 메타와 패치 정보를 묻는 전용 공간입니다.
 
 설치 후 `riftflow`로도 실행할 수 있습니다. 저장소 루트에서 실행하세요.
 설치 없이 이미 PySide6가 있는 환경에서는 `PYTHONPATH=src python -m ui`로 실행 가능합니다.

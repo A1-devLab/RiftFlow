@@ -8,7 +8,8 @@ from rag.gemini import generate
 from ui.services import ask_database
 
 
-def ask(question, *, analysis=None, prompt_builder=None, db_path=Path("data/riftflow.db")):
+def ask(question, *, analysis=None, prompt_builder=None, retrieval_question=None,
+        db_path=Path("data/riftflow.db")):
     load_env(".env")
     model = os.environ.get("GEMINI_MODEL")
     if not os.environ.get("GEMINI_API_KEY") or not model:
@@ -18,6 +19,7 @@ def ask(question, *, analysis=None, prompt_builder=None, db_path=Path("data/rift
         question,
         analysis=analysis,
         prompt_builder=prompt_builder,
+        retrieval_question=retrieval_question,
         generate=partial(generate, model=model, retries=0),
     )
 

@@ -18,7 +18,8 @@ from .retrieve import search, sources_of
 NO_EVIDENCE = '가지고 있는 자료로는 답할 수 없습니다. 근거 없이 추측해서 답하지 않습니다.'
 
 
-def prepare(chunks, question, analysis=None, top_k=5, name_chunks=None):
+def prepare(chunks, question, analysis=None, top_k=5, name_chunks=None,
+            retrieval_question=None):
     """질문을 판정하고 근거를 모은다.
 
     돌려주는 값의 calls_model 이 False 면 Gemini 를 부르지 않는다.
@@ -38,7 +39,7 @@ def prepare(chunks, question, analysis=None, top_k=5, name_chunks=None):
             'calls_model': False,
         }
 
-    results = search(chunks, question, analysis, top_k=top_k)
+    results = search(chunks, retrieval_question or question, analysis, top_k=top_k)
     if not results:
         return {
             'status': 'insufficient_evidence',
@@ -61,7 +62,7 @@ def prepare(chunks, question, analysis=None, top_k=5, name_chunks=None):
 
 def answer(chunks, question, analysis=None, patch=None, top_k=5,
            generate=None, store=None, conversation_id=None, provider='gemini', name_chunks=None,
-           prompt_builder=build):
+           prompt_builder=build, retrieval_question=None):
     """질문 하나를 끝까지 처리한다.
 
     generate 를 넣지 않으면 프롬프트만 만들고 모델을 부르지 않는다.
@@ -70,7 +71,8 @@ def answer(chunks, question, analysis=None, patch=None, top_k=5,
     store 를 넣으면 결과를 남긴다. 막힌 질문도 남긴다.
     어떤 질문이 왜 막혔는지 봐야 안전장치를 고칠 수 있다.
     """
-    outcome = prepare(chunks, question, analysis, top_k, name_chunks=name_chunks)
+    outcome = prepare(chunks, question, analysis, top_k, name_chunks=name_chunks,
+                      retrieval_question=retrieval_question)
     prompt = reply = error = None
 
     if outcome['calls_model']:

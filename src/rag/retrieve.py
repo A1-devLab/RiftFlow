@@ -295,6 +295,12 @@ def search(chunks, question, analysis=None, top_k=5, min_score=MIN_SCORE, max_pe
         score, reasons = score_chunk(chunk, terms, tags, champion, weights,
                                      playstyle, from_champion, kinds, tag_weights,
                                      coverage=coverage if coverage >= floor else 0.0)
+        # out_game은 현재 메타·패치 질문 전용 공간이다. 질문이 '요즘 뭐가 좋아?'처럼
+        # 짧아도 최신 패치 노트를 최소 근거로 포함한다.
+        if (analysis or {}).get('phase') == 'out_game' and chunk['kind'] == 'patch':
+            score = max(score, WEIGHT_PATCH_INTENT)
+            if '공간:out_game' not in reasons:
+                reasons.append('공간:out_game')
         if score >= min_score:
             scored.append({'score': round(score, 3), 'reasons': reasons, 'chunk': chunk})
 

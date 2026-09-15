@@ -5,6 +5,7 @@ from pathlib import Path
 from knowledge.collector import connect, save
 from knowledge.documents import get_documents
 from game_phases.before_game.prompt import SYSTEM as BEFORE_SYSTEM, build as build_before
+from game_phases.out_game.prompt import SYSTEM as OUT_SYSTEM, build as build_out
 from ui.services import ask_database, create_demo
 
 
@@ -82,6 +83,26 @@ class DesktopIntegrationTests(unittest.TestCase):
                               prompt_builder=build_before)
         self.assertEqual(result['status'], 'ready')
         self.assertEqual(result['reason'], '선택된 챔피언: 아리')
+
+    def test_out_game_broad_meta_question_uses_patch_evidence_and_prompt(self):
+        create_demo(self.path)
+        db = connect(self.path)
+        with db:
+            save(db, 'patch', '26.18', 'patch-26.18', '26.18 패치 노트',
+                 '챔피언 및 아이템 변경 사항', 'https://example.com/patch-26-18')
+        db.close()
+        result = ask_database(
+            self.path,
+            '요즘 뭐가 좋아?',
+            analysis={'phase': 'out_game'},
+            prompt_builder=build_out,
+            retrieval_question='요즘 뭐가 좋아? 이번 패치 변경 버프 너프 상향 하향',
+        )
+        self.assertEqual(result['status'], 'ready')
+        self.assertEqual(result['reason'], '선택된 공간: out_game')
+        self.assertEqual(result['prompt']['system'], OUT_SYSTEM)
+        self.assertTrue(any(source['doc_id'].startswith('patch:')
+                            for source in result['sources']))
 
     def test_other_map_item_filtered(self):
         db = connect(self.path)

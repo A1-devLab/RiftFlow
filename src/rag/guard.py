@@ -124,6 +124,10 @@ def check(question, chunks=None, context=None):
         return {'decision': 'allow', 'reason': '선택된 챔피언: ' + champion.strip(),
                 'message': None}
 
+    # out_game은 사용자가 롤 메타 질문 공간을 직접 선택한 상태다.
+    if (context or {}).get('phase') == 'out_game':
+        return {'decision': 'allow', 'reason': '선택된 공간: out_game', 'message': None}
+
     evidence = looks_like_lol(question, entity_names(chunks))
     if not evidence:
         return {'decision': 'off_topic', 'reason': '롤이라는 근거 없음',
