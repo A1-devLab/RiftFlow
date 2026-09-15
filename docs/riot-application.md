@@ -1,8 +1,20 @@
-# RiftFlow — Riot API 신청 자료
+# RiftFlow — Riot API 등록 자료
 
-작성일: 2026-09-15. 아래는 제출용 초안이며 접수·승인 완료를 의미하지 않습니다.
+작성일: 2026-09-15.
 
-## 신청 경로
+## 등록 결과
+
+- 제품명: RiftFlow
+- App ID: 865638
+- 유형: Personal API Key
+- 게임: League of Legends
+- 상태: Approved
+- 등록 주소: https://github.com/A1-devLab/RiftFlow/tree/codex/mvp-desktop
+- 제한: 초당 20회, 2분당 100회
+
+기존에 승인되어 있던 동일 목적의 개인 프로젝트를 현재 RiftFlow 이름, 설명, 저장소 주소로 갱신했습니다. API 키 값은 문서와 저장소에 기록하지 않습니다.
+
+## 등록 및 관리 경로
 
 1. https://developer.riotgames.com/ 에서 본인 라이엇 계정으로 로그인합니다.
 2. 기존 RiftFlow 제품 등록이 있는지 확인합니다. 있으면 중복 신청 대신 기존 제품을 갱신합니다.
