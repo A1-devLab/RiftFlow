@@ -28,6 +28,12 @@ source .venv/bin/activate
 
 실행 방법과 필요한 의존성은 기능 구현 시 추가합니다.
 
+## 의존성
+
+```bash
+pip install -e .
+```
+
 ## 환경변수
 
 실제 연동을 구현할 때 `.env.example`을 `.env`로 복사하여 로컬에서 설정합니다.
