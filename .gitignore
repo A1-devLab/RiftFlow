@@ -35,3 +35,6 @@ htmlcov/
 Thumbs.db
 .idea/
 .vscode/
+
+# Local development artifacts
+/work/

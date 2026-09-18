@@ -1,1 +1,4 @@
-"""라이엇 자료 수집 및 SQLite 저장 프로토타입."""
+"""Knowledge collection and read interface."""
+from .documents import get_documents
+
+__all__ = ["get_documents"]

@@ -1,0 +1,410 @@
+[
+  {
+    "doc_id": "ddragon:item:1018:16.18.1",
+    "kind": "item",
+    "entity_id": "1018",
+    "version": "16.18.1",
+    "subject_name": "민첩성의 망토",
+    "title": "민첩성의 망토 - 아이템 정보",
+    "source_url": "https://ddragon.leagueoflegends.com/cdn/16.18.1/data/ko_KR/item.json",
+    "text": "치명타 확률이 증가합니다.\n치명타 확률 15%",
+    "fields": {
+      "gold_total": 600,
+      "gold_base": 600,
+      "purchasable": true,
+      "stats": {
+        "FlatCritChanceMod": 0.15
+      },
+      "builds_from": [],
+      "builds_into": [
+        "123430",
+        "667666",
+        "3031",
+        "3086",
+        "6670",
+        "3033",
+        "3039",
+        "3508",
+        "3095",
+        "6676"
+      ],
+      "depth": null,
+      "ddragon_tags": [
+        "CriticalStrike"
+      ]
+    },
+    "situation_tags": [
+      "치명타빌드"
+    ],
+    "content_hash": "6cc21cadd2427cc69a2900640dc2eed38b05e572e995464412940661e32af949",
+    "updated_at": "2026-09-13T12:46:09.233594+00:00"
+  },
+  {
+    "doc_id": "ddragon:item:1037:16.18.1",
+    "kind": "item",
+    "entity_id": "1037",
+    "version": "16.18.1",
+    "subject_name": "곡괭이",
+    "title": "곡괭이 - 아이템 정보",
+    "source_url": "https://ddragon.leagueoflegends.com/cdn/16.18.1/data/ko_KR/item.json",
+    "text": "공격력이 상당히 증가합니다.\n공격력 25",
+    "fields": {
+      "gold_total": 875,
+      "gold_base": 875,
+      "purchasable": true,
+      "stats": {
+        "FlatPhysicalDamageMod": 25
+      },
+      "builds_from": [],
+      "builds_into": [
+        "667666",
+        "3071",
+        "6333",
+        "3031",
+        "3153",
+        "6701",
+        "2020",
+        "2517",
+        "3087",
+        "6695",
+        "2523",
+        "3053",
+        "3072",
+        "3124",
+        "3181",
+        "3139",
+        "3161",
+        "6029",
+        "6035",
+        "6673",
+        "6676",
+        "6692"
+      ],
+      "depth": null,
+      "ddragon_tags": [
+        "Damage"
+      ]
+    },
+    "situation_tags": [],
+    "content_hash": "36ab94ba5a3cf5f847976fd606055e982ff4f3eeb4a5f3e3a108a8e9bb185345",
+    "updated_at": "2026-09-13T12:46:09.233594+00:00"
+  },
+  {
+    "doc_id": "ddragon:item:1038:16.18.1",
+    "kind": "item",
+    "entity_id": "1038",
+    "version": "16.18.1",
+    "subject_name": "B.F. 대검",
+    "title": "B.F. 대검 - 아이템 정보",
+    "source_url": "https://ddragon.leagueoflegends.com/cdn/16.18.1/data/ko_KR/item.json",
+    "text": "공격력이 대폭 증가합니다.\n공격력 40",
+    "fields": {
+      "gold_total": 1300,
+      "gold_base": 1300,
+      "purchasable": true,
+      "stats": {
+        "FlatPhysicalDamageMod": 40
+      },
+      "builds_from": [],
+      "builds_into": [
+        "3031",
+        "3026",
+        "3032",
+        "3072",
+        "3095",
+        "4403",
+        "6671"
+      ],
+      "depth": null,
+      "ddragon_tags": [
+        "Damage"
+      ]
+    },
+    "situation_tags": [],
+    "content_hash": "6f84881c0cf4071e014db33e7f922c10b26a7ff577ef9b61369d91f09306da31",
+    "updated_at": "2026-09-13T12:46:09.233594+00:00"
+  },
+  {
+    "doc_id": "ddragon:item:3031:16.18.1",
+    "kind": "item",
+    "entity_id": "3031",
+    "version": "16.18.1",
+    "subject_name": "무한의 대검",
+    "title": "무한의 대검 - 아이템 정보",
+    "source_url": "https://ddragon.leagueoflegends.com/cdn/16.18.1/data/ko_KR/item.json",
+    "text": "치명타 확률이 대폭 증가합니다.\n공격력 75\n치명타 확률 25%\n치명타 피해량 30%",
+    "fields": {
+      "gold_total": 3500,
+      "gold_base": 725,
+      "purchasable": true,
+      "stats": {
+        "FlatCritChanceMod": 0.25,
+        "FlatPhysicalDamageMod": 75
+      },
+      "builds_from": [
+        "1038",
+        "1037",
+        "1018"
+      ],
+      "builds_into": [],
+      "depth": 2,
+      "ddragon_tags": [
+        "CriticalStrike",
+        "Damage"
+      ]
+    },
+    "situation_tags": [
+      "치명타빌드",
+      "지속딜",
+      "장기전"
+    ],
+    "content_hash": "8207894d5c73be6255f92a6cf13b2b8b9423a8bd1e6f962ff2be8d76c9fd5f65",
+    "updated_at": "2026-09-13T12:46:09.233594+00:00"
+  },
+  {
+    "doc_id": "ddragon:item:3111:16.18.1",
+    "kind": "item",
+    "entity_id": "3111",
+    "version": "16.18.1",
+    "subject_name": "헤르메스의 발걸음",
+    "title": "헤르메스의 발걸음 - 아이템 정보",
+    "source_url": "https://ddragon.leagueoflegends.com/cdn/16.18.1/data/ko_KR/item.json",
+    "text": "이동 속도가 증가하고, 방해 효과의 지속시간이 줄어듭니다.\n마법 저항력 20\n이동 속도 45\n강인함 30%",
+    "fields": {
+      "gold_total": 1250,
+      "gold_base": 550,
+      "purchasable": true,
+      "stats": {
+        "FlatSpellBlockMod": 20,
+        "FlatMovementSpeedMod": 45
+      },
+      "builds_from": [
+        "1001",
+        "1033"
+      ],
+      "builds_into": [
+        "3173"
+      ],
+      "depth": 2,
+      "ddragon_tags": [
+        "Boots",
+        "SpellBlock",
+        "Tenacity"
+      ]
+    },
+    "situation_tags": [
+      "상대CC많음",
+      "이동방해",
+      "이동",
+      "상대AP위주"
+    ],
+    "content_hash": "bf02315985016c63d73f69338f63bbeb3dd8644ee558af554b9cf9edb4c6c67f",
+    "updated_at": "2026-09-13T12:46:09.233594+00:00"
+  },
+  {
+    "doc_id": "ddragon:item:3157:16.18.1",
+    "kind": "item",
+    "entity_id": "3157",
+    "version": "16.18.1",
+    "subject_name": "존야의 모래시계",
+    "title": "존야의 모래시계 - 아이템 정보",
+    "source_url": "https://ddragon.leagueoflegends.com/cdn/16.18.1/data/ko_KR/item.json",
+    "text": "사용하면 아무런 행동도 취할 수 없는 대신 공격도 받지 않는 무적 상태가 됩니다.\n주문력 105\n방어력 50\n시간 정지\n2.5초 동안 경직 상태가 됩니다.",
+    "fields": {
+      "gold_total": 3250,
+      "gold_base": 450,
+      "purchasable": true,
+      "stats": {
+        "FlatMagicDamageMod": 105,
+        "FlatArmorMod": 50
+      },
+      "builds_from": [
+        "1058",
+        "2420"
+      ],
+      "builds_into": [],
+      "depth": 3,
+      "ddragon_tags": [
+        "Armor",
+        "SpellDamage",
+        "Active"
+      ]
+    },
+    "situation_tags": [
+      "순간폭딜차단",
+      "생존",
+      "마법사",
+      "상대AD위주"
+    ],
+    "content_hash": "8978bec0e05b37654d13274903cedbd3b875f95fdfe5765078994392526b898b",
+    "updated_at": "2026-09-13T12:46:09.233594+00:00"
+  },
+  {
+    "doc_id": "ddragon:rune:8112:16.18.1",
+    "kind": "rune",
+    "entity_id": "8112",
+    "version": "16.18.1",
+    "subject_name": "감전",
+    "title": "감전 - 지배 핵심",
+    "source_url": "https://ddragon.leagueoflegends.com/cdn/16.18.1/data/ko_KR/runesReforged.json",
+    "text": "3초 동안 같은 챔피언에게 개별 공격 또는 스킬을 3회 적중시키면 추가 적응형 피해를 입힙니다.\n피해량: 70~240(+추가 공격력의 0.1, +주문력의 0.05)\n재사용 대기시간: 20초\n'우리는 그들을 천둥군주라고 부른다. 그들의 번개를 입에 올리는 것은 재앙을 부르는 길이기 때문이다.'",
+    "fields": {
+      "tree_id": 8100,
+      "tree_name": "지배",
+      "slot": "핵심",
+      "rune_key": "Electrocute"
+    },
+    "situation_tags": [
+      "순간폭딜",
+      "치고빠지기",
+      "라인전"
+    ],
+    "content_hash": "ffe737f0fc69f9e32a9bdac2c43236b941bbc61d795c930c4fd1aee6197775c3",
+    "updated_at": "2026-09-13T12:46:09.233594+00:00"
+  },
+  {
+    "doc_id": "ddragon:rune:8010:16.18.1",
+    "kind": "rune",
+    "entity_id": "8010",
+    "version": "16.18.1",
+    "subject_name": "정복자",
+    "title": "정복자 - 정밀 핵심",
+    "source_url": "https://ddragon.leagueoflegends.com/cdn/16.18.1/data/ko_KR/runesReforged.json",
+    "text": "적 챔피언에게 기본 공격 또는 스킬로 피해를 입히면 5초 동안 정복자 중첩을 2만큼 얻어 중첩마다 1.8~4의 적응형 능력치를 얻습니다. 최대 12회까지 중첩됩니다. 원거리 챔피언은 기본 공격으로 중첩을 1만 획득할 수 있습니다.\n최대로 중첩되면 챔피언에게 입힌 피해량의 8%만큼 체력을 회복합니다. (원거리 챔피언은 5%)",
+    "fields": {
+      "tree_id": 8000,
+      "tree_name": "정밀",
+      "slot": "핵심",
+      "rune_key": "Conqueror"
+    },
+    "situation_tags": [
+      "지속교전",
+      "장기전",
+      "브루저"
+    ],
+    "content_hash": "cfe3a3f4cf41fde4f92bcb55b5b5fd316309fa9b85dd6accf27598d2ca9c9716",
+    "updated_at": "2026-09-13T12:46:09.233594+00:00"
+  },
+  {
+    "doc_id": "ddragon:champion:Ahri:16.18.1",
+    "kind": "champion",
+    "entity_id": "Ahri",
+    "version": "16.18.1",
+    "subject_name": "아리",
+    "title": "아리 - 스킬과 운영",
+    "source_url": "https://ddragon.leagueoflegends.com/cdn/16.18.1/data/ko_KR/champion/Ahri.json",
+    "text": "패시브 정기 흡수: 아리가 미니언 또는 몬스터를 9마리 처치하면 체력을 회복합니다.\n아리가 적 챔피언 처치에 관여하면 더 많은 체력을 회복합니다.\nQ 현혹의 구슬: 아리가 구슬을 던지고 다시 받습니다. 던질 때는 마법 피해를 주며 돌아올 때는 고정 피해를 줍니다.\nW 여우불: 아리의 이동 속도가 잠시 동안 크게 증가하며 아리가 여우불 세 개를 생성하면, 각각 자동으로 적을 찾아 공격합니다.\nE 매혹: 아리가 입맞춤을 날려 피해를 주며 맞은 적을 홀립니다. 홀린 적은 즉시 이동 스킬을 멈추고 아리 쪽으로 무작정 다가갑니다.\nR 혼령 질주: 아리가 전방으로 질주하며 근처 적 챔피언들에게 혼령의 정기를 쏘아냅니다. 재사용 대기시간이 적용되기 전에 최대 세 번까지 사용할 수 있으며, 적 챔피언 처치 관여 시 재사용 가능 횟수가 늘어납니다.\n운영 조언: 스킬을 연속으로 쓸 때 매혹으로 시작하면 현혹의 구슬과 여우불의 적중률이 크게 올라갑니다.\n운영 조언: 매혹을 사용해서 팀간 전투를 시작하고, 도망가는 적들은 혼령 질주로 처리하세요.\n운영 조언: 혼령 질주를 쓰면 매혹을 맞히기 쉬워지고, 현혹의 구슬을 두 번 다 맞힐 수도 있으며, 거리를 좁혀 여우불을 사용하기도 쉬워집니다.\n상대할 때: 아리는 궁극기 혼령 질주가 없으면 생존력이 극도로 낮아집니다.\n상대할 때: 미니언 뒤에 숨어서 매혹 스킬을 쓰기 힘들게 만들면 아리가 제대로 피해를 줄 수 없습니다.",
+    "fields": {
+      "champion_key": "103",
+      "resource": "마나",
+      "ddragon_tags": [
+        "Mage",
+        "Assassin"
+      ],
+      "damage_type": "AP",
+      "info": {
+        "attack": 3,
+        "defense": 4,
+        "magic": 8,
+        "difficulty": 5
+      },
+      "base_stats": {
+        "hp": 590,
+        "hpperlevel": 104,
+        "mp": 418,
+        "mpperlevel": 25,
+        "movespeed": 330,
+        "armor": 21,
+        "armorperlevel": 4.2,
+        "spellblock": 30,
+        "spellblockperlevel": 1.3,
+        "attackrange": 550,
+        "hpregen": 2.5,
+        "hpregenperlevel": 0.6,
+        "mpregen": 8,
+        "mpregenperlevel": 0.8,
+        "crit": 0,
+        "critperlevel": 0,
+        "attackdamage": 53,
+        "attackdamageperlevel": 0,
+        "attackspeedperlevel": 2.2,
+        "attackspeed": 0.668
+      },
+      "spell_ids": [
+        "AhriQ",
+        "AhriW",
+        "AhriE",
+        "AhriR"
+      ],
+      "passive_name": "정기 흡수"
+    },
+    "situation_tags": [
+      "마법사",
+      "암살",
+      "AP챔피언"
+    ],
+    "content_hash": "7509db9b436503052d316a33a42ad3714f25e0b188a0a577f1c98580aab4a5b0",
+    "updated_at": "2026-09-13T12:46:09.233594+00:00"
+  },
+  {
+    "doc_id": "ddragon:champion:Garen:16.18.1",
+    "kind": "champion",
+    "entity_id": "Garen",
+    "version": "16.18.1",
+    "subject_name": "가렌",
+    "title": "가렌 - 스킬과 운영",
+    "source_url": "https://ddragon.leagueoflegends.com/cdn/16.18.1/data/ko_KR/champion/Garen.json",
+    "text": "패시브 인내심: 가렌이 잠시 적의 기본 공격 및 스킬 공격에 맞지 않으면 1초마다 총 체력의 일정 비율씩 회복됩니다.\nQ 결정타: 가렌의 이동 속도가 큰 폭으로 증가하고 현재 걸려 있는 모든 둔화 효과가 제거됩니다. 가렌의 다음 공격은 적의 급소를 가격하여 추가 피해를 입히고 침묵시킵니다.\nW 용기: 가렌은 적을 처치하면 기본 지속 효과로 방어력과 마법 저항력이 증가합니다. 또한 효과가 활성화되면 잠시 동안 보호막과 강인함이 부여되며 이후에는 좀 더 긴 시간 동안 받는 피해량 감소 효과가 약하게 적용됩니다.\nE 심판: 가렌이 검을 들고 빠르게 회전하여 주변 적에게 물리 피해를 입힙니다.\nR 데마시아의 정의: 가렌이 적 챔피언을 처단할 데마시아의 힘을 소환합니다.\n운영 조언: 가렌은 일정 시간 공격을 당하지 않으면 체력을 빠르게 회복합니다.\n운영 조언: 심판 스킬은 하나의 대상을 맞힐 때 피해량이 최대로 올라갑니다. 유리한 딜 교환을 위해서는 적 챔피언 하나만 스킬에 맞을 수 있도록 위치를 잘 잡으세요.\n운영 조언: 가렌은 재사용 대기시간 외에 제약이 없으므로 칠흑의 양날 도끼 같은 아이템이 효과가 좋습니다.\n상대할 때: 가렌의 공격으로 입는 물리 피해를 줄이려면 방어력 위주의 아이템을 여러 개 구매하십시오.\n상대할 때: 체력이 낮아지면 가렌이 데마시아의 정의로 플레이어를 빠르게 제거할 수 있으므로 도망가는 것이 좋습니다.\n상대할 때: 수풀에서 가렌을 공격할 때는 조심해야 합니다. 수풀에서 가렌과 마주치면 심판 스킬을 모두 맞고 큰 피해를 입을 수 있습니다.\n상대할 때: 심판은 단일 대상을 맞힐 때 피해량이 최대입니다. 사거리에서 나가거나, 아군 미니언에 붙어서 피해량을 줄이세요.",
+    "fields": {
+      "champion_key": "86",
+      "resource": "없음",
+      "ddragon_tags": [
+        "Fighter",
+        "Tank"
+      ],
+      "damage_type": "AD",
+      "info": {
+        "attack": 7,
+        "defense": 7,
+        "magic": 1,
+        "difficulty": 5
+      },
+      "base_stats": {
+        "hp": 690,
+        "hpperlevel": 98,
+        "mp": 0,
+        "mpperlevel": 0,
+        "movespeed": 340,
+        "armor": 38,
+        "armorperlevel": 4.2,
+        "spellblock": 32,
+        "spellblockperlevel": 1.55,
+        "attackrange": 175,
+        "hpregen": 8,
+        "hpregenperlevel": 0.5,
+        "mpregen": 0,
+        "mpregenperlevel": 0,
+        "crit": 0,
+        "critperlevel": 0,
+        "attackdamage": 69,
+        "attackdamageperlevel": 0,
+        "attackspeedperlevel": 3.65,
+        "attackspeed": 0.625
+      },
+      "spell_ids": [
+        "GarenQ",
+        "GarenW",
+        "GarenE",
+        "GarenR"
+      ],
+      "passive_name": "인내심"
+    },
+    "situation_tags": [
+      "브루저",
+      "탱커",
+      "AD챔피언"
+    ],
+    "content_hash": "57b47ec603f46236bdf0f18edc3823cf94e59285f0a395e3fc410740de96cb31",
+    "updated_at": "2026-09-13T12:46:09.233594+00:00"
+  }
+]

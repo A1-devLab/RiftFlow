@@ -1,0 +1,10 @@
+{
+  "_note": "검색 결과 없음 상황용 샘플입니다. 호출 제한이나 게임 미실행과 구분되어야 하며, rag 는 이 경우 근거 부족으로 응답해야 합니다.",
+  "source": "Riot Games Data Dragon / 공식 한국어 패치 노트",
+  "scope": "소환사의 협곡 (맵 11)",
+  "ddragon_version": "16.18.1",
+  "patch": "26.19",
+  "locale": "ko_KR",
+  "document_count": 0,
+  "documents": []
+}
