@@ -23,7 +23,7 @@ import urllib.error
 import urllib.request
 
 ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent'
-DEFAULT_MODEL = 'gemini-3.8-flash'
+DEFAULT_MODEL = 'gemini-3.5-flash-lite'
 TIMEOUT = 60
 
 # 503 은 모델이 붐빌 때 나온다. 잠깐 뒤 풀리는 경우가 있어 한 번만 더 시도한다.

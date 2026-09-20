@@ -78,7 +78,7 @@ pip install -e .
 `.env.example`을 `.env`로 복사하여 로컬에서만 설정합니다.
 
 - `GEMINI_API_KEY`: Google AI Studio에서 발급한 키
-- `GEMINI_MODEL`: 해당 계정에서 사용 가능한 모델 ID. 검증되지 않은 기본 모델을 강제하지 않습니다.
+- `GEMINI_MODEL`: 기본값은 `gemini-3.5-flash-lite`입니다. 다른 모델을 쓰려면 `.env`에서 변경합니다.
 - `RIOT_API_KEY`: 후속 전적 API 개발용. 현재 MVP에서는 사용하지 않습니다.
 
 GUI의 Gemini 요청은 재시도 없이 1회, 약 60초 타임아웃으로 실행합니다.
