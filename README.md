@@ -67,6 +67,12 @@ python test.py
 5. 완료 후 수집한 로컬 DB로 자동 전환합니다.
 6. 실제 AI 답변은 `.env` 설정 후 앱을 다시 실행하고 Gemini 사용을 켭니다.
 
+## 의존성
+
+```bash
+pip install -e .
+```
+
 ## 환경변수
 
 `.env.example`을 `.env`로 복사하여 로컬에서만 설정합니다.
