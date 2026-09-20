@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 
 from knowledge.documents import get_documents
 from rag.config import load_env
-from rag.gemini import generate
+from rag.gemini import DEFAULT_MODEL, generate
 from .services import ask_database, create_demo, sync_database
 
 STYLE = """
@@ -231,7 +231,7 @@ class Window(QMainWindow):
         layout = self.page('연결 및 신청', '비공개 팀 개발용 설정입니다. API 키는 채팅·GitHub에 올리지 마세요.')
         self.connection = label('', 'badge')
         layout.addWidget(self.connection)
-        self.model = QLineEdit(os.environ.get('GEMINI_MODEL', ''))
+        self.model = QLineEdit(os.environ.get('GEMINI_MODEL') or DEFAULT_MODEL)
         self.model.setPlaceholderText('Google AI Studio에서 사용 가능한 Gemini 모델 ID')
         layout.addWidget(self.model)
         self.sync = QPushButton('공식 게임 자료 수집 / 업데이트')

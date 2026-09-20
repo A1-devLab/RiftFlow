@@ -7,6 +7,7 @@
 남기지 않으려면 --no-save 를 준다. 저장된 통계는 python -m rag history 로 본다.
 """
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -123,7 +124,7 @@ def main():
         if loaded:
             print('%s 에서 읽음: %s' % (args.env, ', '.join(loaded)))
         from .gemini import DEFAULT_MODEL, generate as call_gemini
-        model = args.model or DEFAULT_MODEL
+        model = args.model or os.environ.get('GEMINI_MODEL') or DEFAULT_MODEL
         print('모델: %s' % model)
 
         def generate(prompt):
