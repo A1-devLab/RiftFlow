@@ -28,6 +28,13 @@
     {"id": "d06", "set": "dev", "question": "아리 요즘 할만해?", "types": ["meta"]},
     {"id": "d07", "set": "dev", "question": "정글 뭐 해야 돼?", "types": ["champion"]},
     {"id": "d08", "set": "dev", "question": "요즘 1티어 챔 누구야", "types": ["meta"]},
-    {"id": "d09", "set": "dev", "question": "카시오페아 상향됐는데 이제 쎔?", "types": ["patch", "meta"]}
+    {"id": "d09", "set": "dev", "question": "카시오페아 상향됐는데 이제 쎔?", "types": ["patch", "meta"]},
+    {"id": "d10", "set": "dev", "question": "탑솔 뭐함?", "types": ["champion"]},
+    {"id": "d11", "set": "dev", "question": "원딜 추천", "types": ["champion"]},
+    {"id": "d12", "set": "dev", "question": "서폿 뭐가 좋음", "types": ["champion"]},
+    {"id": "d13", "set": "dev", "question": "템 뭐 사야 돼", "types": ["item_rune"]},
+    {"id": "d14", "set": "dev", "question": "이번 시즌 1티어 누구", "types": ["meta"]},
+    {"id": "d15", "set": "dev", "question": "야스오 너프 언제 풀림", "types": ["patch"]},
+    {"id": "d16", "set": "dev", "question": "롤 시스템 오류 났어", "types": []}
   ]
 }
