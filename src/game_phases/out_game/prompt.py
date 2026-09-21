@@ -106,8 +106,33 @@ def type_line(question):
     return "질문 유형: " + (", ".join(TYPE_NAMES[kind] for kind in types) if types else UNKNOWN_TYPE)
 
 
+def merge_by_document(evidence):
+    """같은 문서에서 나온 조각을 근거 하나로 합친다.
+
+    공통 프롬프트는 조각마다 [근거 N] 을 매기고, 화면의 근거 목록(rag.retrieve.sources_of)은
+    문서마다 한 줄로 합친다. 그래서 패치 노트 조각 2개가 [근거 2] [근거 3] 이 되는데
+    화면에는 패치 노트 한 줄만 보여, 사용자가 [근거 3] 을 찾을 수 없었다.
+    문서가 처음 나온 순서대로 합치므로 [근거 N] 은 화면 근거 목록의 N번째 줄과 같다.
+
+    이어지지 않은 조각 사이에는 '(중략)' 을 넣는다. 패치 노트의 일부만 본다는 것을 모델도 알게 하려는 것이다.
+    항목 이름이 서로 다른 조각이 합쳐지면 이름은 문서 제목으로 한다.
+    """
+    merged, position = [], {}
+    for row in evidence:
+        chunk = row['chunk']
+        if chunk['doc_id'] not in position:
+            position[chunk['doc_id']] = len(merged)
+            merged.append(dict(row, chunk=dict(chunk)))
+            continue
+        target = merged[position[chunk['doc_id']]]['chunk']
+        target['text'] += '\n(중략)\n' + chunk['text']
+        if target['subject_name'] != chunk['subject_name']:
+            target['subject_name'] = chunk['title']
+    return merged
+
+
 def build(question, evidence, analysis=None, patch=None, **kwargs):
-    prompt = build_base(question, evidence, analysis, patch, **kwargs)
+    prompt = build_base(question, merge_by_document(evidence), analysis, patch, **kwargs)
     prompt["system"] = SYSTEM
     prompt["user"] = ("게임 단계: 게임 외부의 일반 정보·메타 질문\n" + type_line(question)
                       + "\n\n" + prompt["user"])

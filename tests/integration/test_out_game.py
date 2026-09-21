@@ -7,11 +7,12 @@ import json
 import unittest
 from pathlib import Path
 
-from game_phases.out_game.prompt import SYSTEM, TYPE_NAMES, TYPES, UNKNOWN_TYPE, build, classify
+from game_phases.out_game.prompt import (SYSTEM, TYPE_NAMES, TYPES, UNKNOWN_TYPE, build, classify,
+                                         merge_by_document)
 from game_phases.out_game.service import PATCH_HINT, search_text
 from rag.knowledge_source import DEFAULT_FIXTURE, DocumentSource, fixture_get_documents
 from rag.prompt import estimate_tokens, name_map
-from rag.retrieve import search
+from rag.retrieve import search, sources_of
 
 OUT_GAME = {'phase': 'out_game'}
 FIXTURE = Path(__file__).resolve().parents[1] / 'fixtures' / 'game_phases' / 'out_game_questions.json'
@@ -194,6 +195,39 @@ class PromptTest(unittest.TestCase):
         self.assertEqual(prompt['system'], SYSTEM)
         self.assertIn('질문 유형: 아이템·룬', prompt['user'])
         self.assertTrue(prompt['user'].rstrip().endswith('무한의 대검 얼마임?'))
+
+    def test_evidence_numbers_follow_the_source_list(self):
+        """[근거 N] 은 화면 근거 목록(문서 단위)의 N번째 줄과 같아야 한다.
+
+        실제 사용에서 '무한의 대검 가격 얼마야?' 의 답이 [근거 3] 을 인용했는데 화면 목록은 2줄이었다.
+        패치 노트 조각 2개가 따로 번호를 받았기 때문이다.
+        """
+        item = next(c for c in self.chunks if c['subject_name'] == '무한의 대검' and c['kind'] == 'item')
+        patches = [c for c in self.chunks if c['kind'] == 'patch'][:2]
+        evidence = [{'score': 5, 'chunk': chunk} for chunk in [item] + patches]
+        self.assertEqual(len({row['chunk']['doc_id'] for row in evidence}), 2)
+
+        user = build('무한의 대검 가격 얼마야?', evidence, OUT_GAME, names=name_map(self.chunks))['user']
+        self.assertIn('[근거 1]', user)
+        self.assertIn('[근거 2]', user)
+        self.assertNotIn('[근거 3]', user)
+        # 합쳐진 근거에 두 조각이 모두 들어가고, 이어지지 않았다는 표시가 있다.
+        for chunk in patches:
+            self.assertIn(chunk['text'].split('\n')[-1], user)
+        self.assertIn('(중략)', user)
+
+        numbered = [row['chunk']['doc_id'] for row in merge_by_document(evidence)]
+        self.assertEqual(numbered, [source['doc_id'] for source in sources_of(evidence)])
+
+    def test_merged_sections_are_named_after_the_document(self):
+        patches = [c for c in self.chunks if c['kind'] == 'patch']
+        bard = next(c for c in patches if c['section'] == '바드')
+        cassiopeia = next(c for c in patches if c['section'] == '카시오페아')
+        merged = merge_by_document([{'score': 1, 'chunk': bard}, {'score': 1, 'chunk': cassiopeia}])
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]['chunk']['subject_name'], bard['title'])
+        # 원래 조각은 바뀌지 않는다 (검색 결과와 저장 기록이 같은 조각을 본다).
+        self.assertEqual(bard['subject_name'], '바드')
 
     def test_unknown_type_is_left_to_the_model(self):
         self.assertIn('질문 유형: ' + UNKNOWN_TYPE, self.prompt('무한의 대검 언제 사?')['user'])
