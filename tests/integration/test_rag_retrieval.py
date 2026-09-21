@@ -166,6 +166,41 @@ class NameMatchTest(unittest.TestCase):
         self.assertEqual(terms_of('무한의 대검이랑 처형인의 대검 비교해줘').count('대검'), 1)
 
 
+class IntentWordTest(unittest.TestCase):
+    """'챔피언', '변경' 처럼 무엇을 묻는지 나타내는 말은 본문에 있어도 근거가 아니다.
+
+    실제 사용에서 '미드 챔피언 추천해줘' 의 답이 스몰더와 뽀삐의 분류를 나열했다.
+    스몰더는 '녹서스 변경 부근'(국경이라는 뜻), 뽀삐는 '용맹한 챔피언이 넘쳐나지만' 이 걸려
+    그 한 단어로 종류 가산점까지 받아 통과했다.
+    """
+
+    HINT = ' 이번 패치 변경 버프 너프 상향 하향'
+
+    @classmethod
+    def setUpClass(cls):
+        cls.chunks = build_index(load_documents(FIXTURES / 'rag' / 'documents_ddragon.json'))
+
+    def champions(self, question):
+        return {row['chunk']['subject_name'] for row in search(self.chunks, question)
+                if row['chunk']['kind'] == 'champion'}
+
+    def test_intent_word_alone_does_not_bring_champions(self):
+        self.assertEqual(self.champions('미드 챔피언 추천해줘' + self.HINT), set())
+
+    def test_real_tag_match_still_counts(self):
+        found = self.champions('AD 챔피언 추천해줘' + self.HINT)
+        self.assertIn('징크스', found)
+        # 잔나는 AP 서포터다. '변경' 한 단어로만 들어왔었다.
+        self.assertNotIn('잔나', found)
+
+    def test_bare_intent_question_finds_nothing(self):
+        """'챔피언 추천' 만으로는 찾을 내용이 없다. 예전에는 가나다순으로 아트록스, 아리가 나왔다."""
+        self.assertEqual(search(self.chunks, '챔피언 추천'), [])
+
+    def test_named_question_is_unchanged(self):
+        self.assertEqual(search(self.chunks, '바드 이번에 너프됐어?')[0]['chunk']['section'], '바드')
+
+
 class PatchSectionTest(unittest.TestCase):
     """패치 노트를 항목(챔피언·아이템) 단위로 자르는지 본다.
 
