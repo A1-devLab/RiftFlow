@@ -45,28 +45,61 @@ def pack(lines, max_chars, overlap_lines):
     return blocks
 
 
-def chunk_document(document, max_chars=MAX_CHARS, overlap_lines=OVERLAP_LINES):
-    """문서 하나를 청크 목록으로 만든다. 종류마다 자르는 방식이 다르다."""
+def sections(lines, headings):
+    """패치 노트를 항목(챔피언, 아이템 등) 단위로 나눈다.
+
+    패치 노트는 '바드' 처럼 이름만 있는 줄로 항목이 시작하고, 그 아래에 설명과 수치가 온다.
+    headings 는 자료에 있는 챔피언·아이템·룬 이름이다. 이름과 똑같은 줄을 항목의 시작으로 본다.
+    첫 이름 줄 앞(머리말, 요약 문단)은 이름 없는 항목 하나가 된다.
+
+    400자로 기계적으로만 자르면 '카시오페아' 줄과 그 수치가 다른 조각으로 갈라지고,
+    조각 이름이 모두 '26.18 패치 노트' 라서 '카시오페아 뭐 바뀜?' 이 이름 점수를 받지 못했다.
+    """
+    parts, name, current = [], None, []
+    for line in lines:
+        if line in headings:
+            if current:
+                parts.append((name, current))
+            name, current = line, []
+        current.append(line)
+    if current:
+        parts.append((name, current))
+    return parts
+
+
+def chunk_document(document, max_chars=MAX_CHARS, overlap_lines=OVERLAP_LINES, headings=None):
+    """문서 하나를 청크 목록으로 만든다. 종류마다 자르는 방식이 다르다.
+
+    headings 를 주면 패치 노트를 항목 단위로 먼저 나눈다 (sections).
+    항목에서 나온 조각은 이름(subject_name)이 항목 이름이 되고, 첫 줄에 항목 이름을 둔다.
+    그래서 항목이 길어 여러 조각으로 나뉘어도 조각마다 누구 이야기인지 남는다.
+    """
     lines = split_lines(document['text'])
 
     if document['kind'] == 'champion':
         # 패시브와 Q~R 이 한 줄씩이다. 스킬 하나가 청크 하나가 되는 편이 근거로 쓰기 좋다.
-        blocks = [[line] for line in lines]
+        blocks = [(None, [line]) for line in lines]
     elif document['kind'] == 'patch':
-        blocks = pack(lines, max_chars, overlap_lines)
+        blocks = []
+        for name, part in sections(lines, headings or set()):
+            for block in pack(part, max_chars, overlap_lines):
+                if name and block[0] != name:
+                    block = [name] + block
+                blocks.append((name, block))
     else:
         # 아이템과 룬은 짧아서 대개 한 덩어리로 끝난다.
-        blocks = pack(lines, max_chars, 0)
+        blocks = [(None, block) for block in pack(lines, max_chars, 0)]
 
     chunks = []
-    for index, block in enumerate(blocks):
+    for index, (section, block) in enumerate(blocks):
         chunks.append({
             'chunk_id': '%s#%d' % (document['doc_id'], index),
             'doc_id': document['doc_id'],
             'kind': document['kind'],
             'entity_id': document['entity_id'],
             'version': document['version'],
-            'subject_name': document['subject_name'],
+            'subject_name': section or document['subject_name'],
+            'section': section,
             'title': document['title'],
             'source_url': document['source_url'],
             'situation_tags': document.get('situation_tags') or [],
@@ -77,8 +110,13 @@ def chunk_document(document, max_chars=MAX_CHARS, overlap_lines=OVERLAP_LINES):
 
 
 def build_index(documents, max_chars=MAX_CHARS, overlap_lines=OVERLAP_LINES):
-    """문서 목록 전체를 청크 목록으로 편다."""
+    """문서 목록 전체를 청크 목록으로 편다.
+
+    패치 노트의 항목 이름은 같이 받은 챔피언·아이템·룬 문서의 이름으로 알아본다.
+    패치 노트만 받으면 이름을 모르므로 예전처럼 400자 단위로만 자른다.
+    """
+    headings = {document['subject_name'] for document in documents if document['kind'] != 'patch'}
     chunks = []
     for document in documents:
-        chunks.extend(chunk_document(document, max_chars, overlap_lines))
+        chunks.extend(chunk_document(document, max_chars, overlap_lines, headings))
     return chunks

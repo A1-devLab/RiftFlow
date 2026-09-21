@@ -64,6 +64,8 @@ KIND_KEYWORDS = {
     'patch': ['패치', '이번 패치', '바뀐', '변경', '너프', '버프', '상향', '하향'],
     'champion': ['스킬', '패시브', '궁', '챔피언'],
 }
+# 종류를 나타내는 말의 낱말. 본문에 있어도 내용이 맞았다는 근거가 아니다 (score_chunk).
+INTENT_WORDS = {word for words in KIND_KEYWORDS.values() for phrase in words for word in phrase.split()}
 
 # 점수 가중치. 이름이 걸리는 쪽을 가장 크게 본다.
 WEIGHT_NAME = 5
@@ -242,13 +244,19 @@ def score_chunk(chunk, terms, tags, champion, weights, playstyle, champion_tags,
         rare = sorted(hits, key=lambda t: -weights.get(t, 0))[:3]
         reasons.append('본문:' + ','.join(rare))
 
-    if champion and champion.lower() in (chunk['entity_id'].lower(), name):
+    picked_champion = bool(champion and champion.lower() in (chunk['entity_id'].lower(), name))
+    if picked_champion:
         score += WEIGHT_CHAMPION
         reasons.append('챔피언:' + champion)
 
     # 다른 근거가 하나도 없으면 종류만으로 올리지 않는다.
     # 그러지 않으면 '뭐 사요?' 같은 말 한마디에 모든 아이템이 통과한다.
-    if score > 0 and chunk['kind'] in kinds:
+    # '챔피언', '변경' 처럼 무엇을 묻는지 나타내는 말(KIND_KEYWORDS)이 본문에 있는 것은 근거로 치지 않는다.
+    # '미드 챔피언 추천해줘' 에 스몰더('녹서스 변경 부근' 의 국경이라는 뜻의 변경)와
+    # 뽀삐('용맹한 챔피언이 넘쳐나지만')가 이 한 단어로 종류 점수까지 받아 근거로 들어왔다.
+    content_hits = [term for term in hits if term not in INTENT_WORDS]
+    evidence = coverage or matched or from_playstyle or from_champion or content_hits or picked_champion
+    if evidence and chunk['kind'] in kinds:
         # 무엇이 바뀌었는지 묻는 질문에는 패치 노트만 답할 수 있다.
         # 챔피언과 아이템 문서는 지금 상태만 담고 있어 변경 전후를 모른다.
         score += WEIGHT_PATCH_INTENT if chunk['kind'] == 'patch' else WEIGHT_KIND
