@@ -4,16 +4,16 @@ from functools import partial
 from pathlib import Path
 
 from rag.config import load_env
-from rag.gemini import generate
+from rag.gemini import DEFAULT_MODEL, generate
 from ui.services import ask_database
 
 
 def ask(question, *, analysis=None, prompt_builder=None, retrieval_question=None,
         db_path=Path("data/riftflow.db")):
     load_env(".env")
-    model = os.environ.get("GEMINI_MODEL")
-    if not os.environ.get("GEMINI_API_KEY") or not model:
-        raise RuntimeError(".env에 GEMINI_API_KEY와 GEMINI_MODEL을 설정하세요.")
+    model = os.environ.get("GEMINI_MODEL") or DEFAULT_MODEL
+    if not os.environ.get("GEMINI_API_KEY"):
+        raise RuntimeError(".env에 GEMINI_API_KEY를 설정하세요.")
     return ask_database(
         db_path,
         question,
