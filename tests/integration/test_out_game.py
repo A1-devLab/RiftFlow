@@ -4,12 +4,12 @@
 blind 는 판정 규칙을 보기 전에 담당자가 쓴 질문이다. 판정이 틀리면 정답이 아니라 규칙을 고친다.
 """
 import json
+import re
 import unittest
 from pathlib import Path
 
-from game_phases.out_game.prompt import (SYSTEM, TYPE_NAMES, TYPES, UNKNOWN_TYPE, build, classify,
-                                         merge_by_document)
-from game_phases.out_game.service import PATCH_HINT, search_text
+from game_phases.out_game.prompt import SYSTEM, TYPE_NAMES, UNKNOWN_TYPE, build
+from game_phases.out_game.service import PATCH_HINT, TYPES, classify, search_text
 from rag.knowledge_source import DEFAULT_FIXTURE, DocumentSource, fixture_get_documents
 from rag.prompt import estimate_tokens, name_map
 from rag.retrieve import search, sources_of
@@ -124,9 +124,16 @@ class PromptTest(unittest.TestCase):
         source = DocumentSource(fixture_get_documents(DEFAULT_FIXTURE))
         cls.chunks = source.chunks('26.18')
 
+    def analysis(self, question):
+        # service.ask_out_game 이 넘기는 것과 같은 모양
+        return dict(OUT_GAME, question_types=classify(question))
+
     def prompt(self, question):
         evidence = search(self.chunks, question, OUT_GAME)
-        return build(question, evidence, OUT_GAME, names=name_map(self.chunks))
+        return build(question, evidence, self.analysis(question), names=name_map(self.chunks))
+
+    def evidence_doc_ids(self, user):
+        return re.findall(r'^문서ID: (.+)$', user, flags=re.MULTILINE)
 
     def test_system_carries_each_assigned_rule(self):
         rules = {
@@ -207,7 +214,8 @@ class PromptTest(unittest.TestCase):
         evidence = [{'score': 5, 'chunk': chunk} for chunk in [item] + patches]
         self.assertEqual(len({row['chunk']['doc_id'] for row in evidence}), 2)
 
-        user = build('무한의 대검 가격 얼마야?', evidence, OUT_GAME, names=name_map(self.chunks))['user']
+        question = '무한의 대검 가격 얼마야?'
+        user = build(question, evidence, self.analysis(question), names=name_map(self.chunks))['user']
         self.assertIn('[근거 1]', user)
         self.assertIn('[근거 2]', user)
         self.assertNotIn('[근거 3]', user)
@@ -216,18 +224,34 @@ class PromptTest(unittest.TestCase):
             self.assertIn(chunk['text'].split('\n')[-1], user)
         self.assertIn('(중략)', user)
 
-        numbered = [row['chunk']['doc_id'] for row in merge_by_document(evidence)]
-        self.assertEqual(numbered, [source['doc_id'] for source in sources_of(evidence)])
+        self.assertEqual(self.evidence_doc_ids(user), [source['doc_id'] for source in sources_of(evidence)])
 
     def test_merged_sections_are_named_after_the_document(self):
         patches = [c for c in self.chunks if c['kind'] == 'patch']
         bard = next(c for c in patches if c['section'] == '바드')
         cassiopeia = next(c for c in patches if c['section'] == '카시오페아')
-        merged = merge_by_document([{'score': 1, 'chunk': bard}, {'score': 1, 'chunk': cassiopeia}])
-        self.assertEqual(len(merged), 1)
-        self.assertEqual(merged[0]['chunk']['subject_name'], bard['title'])
+        user = build('패치 뭐 바뀜', [{'score': 1, 'chunk': bard}, {'score': 1, 'chunk': cassiopeia}],
+                     self.analysis('패치 뭐 바뀜'))['user']
+        self.assertNotIn('[근거 2]', user)
+        self.assertIn('이름: %s /' % bard['title'], user)
         # 원래 조각은 바뀌지 않는다 (검색 결과와 저장 기록이 같은 조각을 본다).
         self.assertEqual(bard['subject_name'], '바드')
+
+    def test_type_line_comes_from_analysis(self):
+        """판정은 service.py 가 하고 build 는 analysis 로 받는다. prompt.py 에는 SYSTEM 과 build 만 둔다."""
+        chunk = next(c for c in self.chunks if c['subject_name'] == '무한의 대검' and c['kind'] == 'item')
+        evidence = [{'score': 1, 'chunk': chunk}]
+        given = build('아무 질문', evidence, dict(OUT_GAME, question_types=['patch', 'meta']))['user']
+        self.assertIn('질문 유형: 패치 변경, 메타', given)
+        missing = build('무한의 대검 얼마임?', evidence, OUT_GAME)['user']
+        self.assertIn('질문 유형: ' + UNKNOWN_TYPE, missing)
+
+    def test_prompt_module_holds_only_system_and_build(self):
+        import inspect
+        import game_phases.out_game.prompt as module
+        functions = [name for name, value in vars(module).items()
+                     if inspect.isfunction(value) and value.__module__ == module.__name__]
+        self.assertEqual(functions, ['build'])
 
     def test_unknown_type_is_left_to_the_model(self):
         self.assertIn('질문 유형: ' + UNKNOWN_TYPE, self.prompt('무한의 대검 언제 사?')['user'])

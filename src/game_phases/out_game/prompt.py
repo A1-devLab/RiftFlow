@@ -1,63 +1,13 @@
 """Gemini prompt for questions asked outside a match.
 
 프롬프트 담당자는 이 파일의 SYSTEM과 build 함수만 수정하면 됩니다.
-classify 는 질문 유형 판정입니다. 유형에 따라 검색어와 답변 지침이 달라서 같은 파일에 둡니다.
+질문 유형 판정(classify)은 검색어도 정하므로 service.py 에 있고, 결과는 analysis 로 받습니다.
 """
-import re
-
 from rag.prompt import build as build_base, estimate_tokens
 
-# 질문 유형. 한 질문에 여러 개가 붙을 수 있다. 순서는 결과를 적을 때의 순서다.
-TYPES = ("patch", "champion", "item_rune", "meta")
+# 질문 유형 코드(service.TYPES)를 프롬프트에 적을 이름.
 TYPE_NAMES = {"patch": "패치 변경", "champion": "챔피언 추천",
               "item_rune": "아이템·룬", "meta": "메타"}
-
-# 단어 규칙으로 판정한다. Gemini 에 판정을 맡기면 질문마다 호출이 한 번 더 들어가
-# 하루 호출 한도와 응답 시간을 두 배로 쓴다.
-# 띄어쓰기를 지우고 소문자로 바꾼 질문에서 찾는다. '뭐 해야' 와 '뭐해야' 를 같게 보기 위해서다.
-PATCH_WORDS = ("패치", "버프", "너프", "상향", "하향", "바뀌", "바뀐", "바뀜", "변경")
-# 26.18 처럼 패치 번호를 직접 쓴 경우
-PATCH_NUMBER = re.compile(r"\d{1,2}\.\d{1,2}")
-
-ITEM_RUNE_WORDS = ("아이템", "템", "룬", "빌드", "가격", "얼마", "조합", "코어",
-                   "살까", "사야", "가야", "갈까", "가는게", "올려")
-
-# '요즘' 은 넣지 않는다. '요즘 원딜 뭐가 좋아?' 는 추천이고 메타가 아니다 (fixture 정답).
-META_WORDS = ("메타", "티어", "대세", "사기", "op", "할만", "쎄", "쎔", "쎈",
-              "강해", "강함", "세졌", "좋아졌", "요즘흐름")
-
-# 추천은 '무엇을 할지' 를 묻는 말과 '챔피언' 을 가리키는 말이 함께 있어야 한다.
-# '점심 메뉴 추천해줘' 처럼 추천만 있으면 롤 질문이 아니다.
-RECOMMEND_WORDS = ("추천", "뭐해", "뭐할", "뭐하지", "뭐함", "뭐하면", "뭐가좋", "뭐좋", "픽")
-CHAMPION_WORDS = ("챔", "원딜", "미드", "탑", "정글", "서폿", "서포터", "ad", "ap")
-
-
-# 유형 단어를 품고 있지만 그 뜻이 아닌 말. 찾기 전에 지운다. '시스템' 의 '템' 이 아이템으로 잡혔다.
-NOT_WORDS = ("시스템",)
-
-
-def compact(question):
-    text = re.sub(r"\s+", "", question or "").lower()
-    for word in NOT_WORDS:
-        text = text.replace(word, "")
-    return text
-
-
-def classify(question):
-    """질문 유형을 판정한다. 해당하는 유형을 TYPES 순서로 돌려준다. 없으면 빈 목록이다."""
-    text = compact(question)
-    found = set()
-    if any(word in text for word in PATCH_WORDS) or PATCH_NUMBER.search(text):
-        found.add("patch")
-    if any(word in text for word in ITEM_RUNE_WORDS):
-        found.add("item_rune")
-    if any(word in text for word in META_WORDS):
-        found.add("meta")
-    if any(word in text for word in RECOMMEND_WORDS) and any(word in text for word in CHAMPION_WORDS):
-        # '원딜 아이템 뭐가 좋아?' 는 아이템 질문이다. 아이템·룬 질문이면 '챔' 이 직접 있을 때만 추천으로 본다.
-        if "item_rune" not in found or "챔" in text:
-            found.add("champion")
-    return [kind for kind in TYPES if kind in found]
 
 
 # 공통 SYSTEM(rag/prompt.py)을 통째로 덮어쓰므로, 공통에 있던 규칙 중 필요한 것
@@ -100,22 +50,18 @@ SYSTEM = """너는 리그 오브 레전드 코치다. 소환사의 협곡만 다
 UNKNOWN_TYPE = "정해지지 않음. 질문과 근거를 보고 판단한다"
 
 
-def type_line(question):
-    """프롬프트에 넣을 질문 유형 한 줄."""
-    types = classify(question)
-    return "질문 유형: " + (", ".join(TYPE_NAMES[kind] for kind in types) if types else UNKNOWN_TYPE)
+def build(question, evidence, analysis=None, patch=None, **kwargs):
+    """공통 RAG 근거에 out_game 전용 지시와 질문 유형을 붙인다.
 
+    질문 유형은 service.py 가 판정해 analysis['question_types'] 로 넘긴다. 없으면 '정해지지 않음' 이다.
 
-def merge_by_document(evidence):
-    """같은 문서에서 나온 조각을 근거 하나로 합친다.
-
+    같은 문서에서 나온 조각은 근거 하나로 합친 뒤 번호를 매긴다.
     공통 프롬프트는 조각마다 [근거 N] 을 매기고, 화면의 근거 목록(rag.retrieve.sources_of)은
     문서마다 한 줄로 합친다. 그래서 패치 노트 조각 2개가 [근거 2] [근거 3] 이 되는데
     화면에는 패치 노트 한 줄만 보여, 사용자가 [근거 3] 을 찾을 수 없었다.
     문서가 처음 나온 순서대로 합치므로 [근거 N] 은 화면 근거 목록의 N번째 줄과 같다.
-
-    이어지지 않은 조각 사이에는 '(중략)' 을 넣는다. 패치 노트의 일부만 본다는 것을 모델도 알게 하려는 것이다.
-    항목 이름이 서로 다른 조각이 합쳐지면 이름은 문서 제목으로 한다.
+    이어지지 않은 조각 사이에는 '(중략)' 을 넣어 일부만 본다는 것을 모델도 알게 한다.
+    항목 이름이 서로 다른 조각이 합쳐지면 이름은 문서 제목으로 한다. 원래 조각은 바꾸지 않는다.
     """
     merged, position = [], {}
     for row in evidence:
@@ -128,14 +74,13 @@ def merge_by_document(evidence):
         target['text'] += '\n(중략)\n' + chunk['text']
         if target['subject_name'] != chunk['subject_name']:
             target['subject_name'] = chunk['title']
-    return merged
 
+    types = (analysis or {}).get("question_types") or []
+    type_line = "질문 유형: " + (", ".join(TYPE_NAMES[kind] for kind in types) if types else UNKNOWN_TYPE)
 
-def build(question, evidence, analysis=None, patch=None, **kwargs):
-    prompt = build_base(question, merge_by_document(evidence), analysis, patch, **kwargs)
+    prompt = build_base(question, merged, analysis, patch, **kwargs)
     prompt["system"] = SYSTEM
-    prompt["user"] = ("게임 단계: 게임 외부의 일반 정보·메타 질문\n" + type_line(question)
-                      + "\n\n" + prompt["user"])
+    prompt["user"] = "게임 단계: 게임 외부의 일반 정보·메타 질문\n" + type_line + "\n\n" + prompt["user"]
     prompt["chars"] = len(prompt["system"]) + len(prompt["user"])
     # 공통 build 가 공통 SYSTEM 으로 셈한 값이라 다시 센다.
     prompt["estimated_tokens"] = estimate_tokens(prompt["system"]) + estimate_tokens(prompt["user"])
