@@ -7,9 +7,10 @@ import json
 import unittest
 from pathlib import Path
 
-from game_phases.out_game.prompt import TYPES, classify
+from game_phases.out_game.prompt import SYSTEM, TYPE_NAMES, TYPES, UNKNOWN_TYPE, build, classify
 from game_phases.out_game.service import PATCH_HINT, search_text
 from rag.knowledge_source import DEFAULT_FIXTURE, DocumentSource, fixture_get_documents
+from rag.prompt import estimate_tokens, name_map
 from rag.retrieve import search
 
 OUT_GAME = {'phase': 'out_game'}
@@ -112,6 +113,93 @@ class SearchEffectTest(unittest.TestCase):
         그때 expectedFailure 를 뗀다.
         """
         self.assertEqual(self.results('무한의 대검 얼마임?')[0]['chunk']['subject_name'], '무한의 대검')
+
+
+class PromptTest(unittest.TestCase):
+    """팀이 정한 out_game 답변 규칙이 SYSTEM 에 들어 있는지 본다. 모델이 지키는지는 실제 호출로만 알 수 있다."""
+
+    @classmethod
+    def setUpClass(cls):
+        source = DocumentSource(fixture_get_documents(DEFAULT_FIXTURE))
+        cls.chunks = source.chunks('26.18')
+
+    def prompt(self, question):
+        evidence = search(self.chunks, question, OUT_GAME)
+        return build(question, evidence, OUT_GAME, names=name_map(self.chunks))
+
+    def test_system_carries_each_assigned_rule(self):
+        rules = {
+            'DB 근거만 사용': "'근거' 에 있는 내용만 쓴다",
+            '[근거 N] 표시': '[근거 N]',
+            '패치 버전 표시': '버전을 그대로 밝힌다',
+            '표본 수 표시': '표본 수',
+            '없으면 부족하다고 설명': '추측하지 않는다',
+            '패치 변경과 통계 구분': '의도한 변경이지 실제 성적이 아니다',
+            '숫자 ID 비노출 (공통 규칙에서 옮김)': '숫자 ID 를 보여 주지 않는다',
+            '협곡 한정 (공통 규칙에서 옮김)': '소환사의 협곡만',
+        }
+        for rule, phrase in rules.items():
+            with self.subTest(rule=rule):
+                self.assertIn(phrase, SYSTEM)
+
+    def test_champion_rule_does_not_invite_picking_retrieved_champions(self):
+        # 검색된 챔피언은 우연히 뽑힌다('변경' 이라는 낱말이 스킬 설명에 있어서 등).
+        # 근거에 있다는 이유로 추천하게 두면 근거 없는 추천이 근거 있는 것처럼 보인다.
+        self.assertIn('근거에 챔피언이 있다는 것만으로 추천하지 않는다', SYSTEM)
+        self.assertIn('역할 분류(예: Marksman, Mage)는 포지션이 아니다', SYSTEM)
+        # 데이터가 늘어도 틀린 말이 되지 않게 '없다' 고 단정하지 않는다.
+        self.assertNotIn('자료에는 포지션, 승률, 상성, 난이도가 없다', SYSTEM)
+
+    def test_system_fixes_from_line_by_line_review(self):
+        """문장별 검토(A~J)에서 고친 내용. 이유는 out_game/prompt.py 의 SYSTEM 위 주석에 있다."""
+        present = {
+            'A 패치 노트는 일부 조각': '패치 노트 전체가 아니라 일부 조각이다',
+            'A 전체 요약인 척 금지': '전체를 요약한 것처럼 말하지 말고',
+            'B 변경 후 값끼리만 비교': '패치 노트의 변경 후 값과 게임 데이터의 값',
+            'B 변경 전 값은 비교 안 함': '변경 전 값은 지금 값이 아니므로',
+            'C 마크다운 금지': '마크다운 서식을 쓰지 않는다',
+            'D 되묻지 말고 다시 물을 예시': '다시 물으면 되는지 예시 질문으로',
+            'E 통계를 물을 때만 없다고 밝힘': '이런 통계를 묻는 질문인데 근거에 없으면',
+            'F 메타도 조건형': '근거에 통계가 없으면 실제 메타와 티어는',
+            'G 의도는 전하되 강해졌다고 하지 않음': '라이엇이 밝힌 의도는 전해도 되지만',
+            'H 재료와 조합 비용': '하위 재료와 조합 비용',
+            'J 출처 주소와 문서ID 생략': '출처 주소와 문서ID 는',
+        }
+        for fix, phrase in present.items():
+            with self.subTest(fix=fix):
+                self.assertIn(phrase, SYSTEM)
+        absent = {
+            'E 조건 없는 통계 문구': '. 근거에 통계가 없으면 "지금',
+            'F 메타 단정': '통계가 없어 확정할 수 없다',
+            'G 판단을 말하게 하는 문구': '판단을 나눠',
+            'H 게임 중 골드 상황': '골드가 부족할 때',
+            'I 버전 예시 숫자': '26.18',
+            'I 버전 예시 숫자 (게임 데이터)': '16.18.1',
+            'D 되묻기': '무엇을 알려 주면 되는지 묻는다',
+        }
+        for fix, phrase in absent.items():
+            with self.subTest(fix=fix):
+                self.assertNotIn(phrase, SYSTEM)
+
+    def test_system_names_every_question_type(self):
+        for name in TYPE_NAMES.values():
+            with self.subTest(type=name):
+                self.assertIn('- %s:' % name, SYSTEM)
+
+    def test_build_uses_out_game_system_and_type_line(self):
+        prompt = self.prompt('무한의 대검 얼마임?')
+        self.assertEqual(prompt['system'], SYSTEM)
+        self.assertIn('질문 유형: 아이템·룬', prompt['user'])
+        self.assertTrue(prompt['user'].rstrip().endswith('무한의 대검 얼마임?'))
+
+    def test_unknown_type_is_left_to_the_model(self):
+        self.assertIn('질문 유형: ' + UNKNOWN_TYPE, self.prompt('무한의 대검 언제 사?')['user'])
+
+    def test_size_is_counted_with_out_game_system(self):
+        prompt = self.prompt('무한의 대검 얼마임?')
+        self.assertEqual(prompt['chars'], len(prompt['system']) + len(prompt['user']))
+        self.assertEqual(prompt['estimated_tokens'],
+                         estimate_tokens(prompt['system']) + estimate_tokens(prompt['user']))
 
 
 if __name__ == '__main__':
