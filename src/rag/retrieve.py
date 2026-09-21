@@ -60,7 +60,8 @@ CHAMPION_TAGS = {
 # 질문이 무엇을 묻는지. 해당 종류를 위로 올린다.
 KIND_KEYWORDS = {
     'rune': ['룬', '특성', '키스톤', '핵심 룬'],
-    'item': ['아이템', '템', '빌드', '올릴', '사요', '구매'],
+    'item': ['아이템', '템', '빌드', '올릴', '사요', '구매', '가격', '얼마', '조합',
+             '코어', '살까', '사야', '가야', '갈까'],
     'patch': ['패치', '이번 패치', '바뀐', '변경', '너프', '버프', '상향', '하향'],
     'champion': ['스킬', '패시브', '궁', '챔피언'],
 }
@@ -303,9 +304,13 @@ def search(chunks, question, analysis=None, top_k=5, min_score=MIN_SCORE, max_pe
         score, reasons = score_chunk(chunk, terms, tags, champion, weights,
                                      playstyle, from_champion, kinds, tag_weights,
                                      coverage=coverage if coverage >= floor else 0.0)
-        # out_game은 현재 메타·패치 질문 전용 공간이다. 질문이 '요즘 뭐가 좋아?'처럼
-        # 짧아도 최신 패치 노트를 최소 근거로 포함한다.
-        if (analysis or {}).get('phase') == 'out_game' and chunk['kind'] == 'patch':
+        # out_game의 패치·메타·챔피언 질문에는 최신 패치 노트를 최소 근거로 포함한다.
+        # 아이템·룬만 묻는 질문에 이 점수를 주면 이름이 정확히 맞는 정적 자료보다
+        # 관계없는 패치 노트가 먼저 나오므로 강제 점수를 적용하지 않는다.
+        question_types = set((analysis or {}).get('question_types') or [])
+        needs_patch = not question_types or bool(question_types & {'patch', 'meta', 'champion'})
+        if ((analysis or {}).get('phase') == 'out_game' and chunk['kind'] == 'patch'
+                and needs_patch):
             score = max(score, WEIGHT_PATCH_INTENT)
             if '공간:out_game' not in reasons:
                 reasons.append('공간:out_game')

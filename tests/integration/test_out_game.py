@@ -86,7 +86,9 @@ class SearchEffectTest(unittest.TestCase):
         cls.chunks = source.chunks('26.18')
 
     def results(self, question):
-        return search(self.chunks, search_text(question, classify(question)), OUT_GAME)
+        types = classify(question)
+        analysis = dict(OUT_GAME, question_types=types)
+        return search(self.chunks, search_text(question, types), analysis)
 
     def test_item_questions_keep_their_own_document(self):
         for question, name in self.ITEM_QUESTIONS:
@@ -106,14 +108,10 @@ class SearchEffectTest(unittest.TestCase):
         self.assertTrue(results)
         self.assertEqual(results[0]['chunk']['kind'], 'patch')
 
-    @unittest.expectedFailure
     def test_item_question_ranks_item_first(self):
-        """알려진 한계. out_game 패치 노트 최저 점수(5)가 아이템 점수(3.3)보다 높다.
-
-        rag/retrieve.py 의 최저 점수가 바뀌면 이 테스트가 '예상치 못한 성공' 으로 알려 준다.
-        그때 expectedFailure 를 뗀다.
-        """
-        self.assertEqual(self.results('무한의 대검 얼마임?')[0]['chunk']['subject_name'], '무한의 대검')
+        for question, name in self.ITEM_QUESTIONS:
+            with self.subTest(question=question):
+                self.assertEqual(self.results(question)[0]['chunk']['subject_name'], name)
 
 
 class PromptTest(unittest.TestCase):
