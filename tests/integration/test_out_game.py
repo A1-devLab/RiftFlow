@@ -151,7 +151,7 @@ class PromptTest(unittest.TestCase):
         self.assertNotIn('자료에는 포지션, 승률, 상성, 난이도가 없다', SYSTEM)
 
     def test_system_fixes_from_line_by_line_review(self):
-        """문장별 검토(A~J)에서 고친 내용. 이유는 out_game/prompt.py 의 SYSTEM 위 주석에 있다."""
+        """문장별 검토(A~J)와 5단계 실제 호출(①~③)에서 고친 내용. 이유는 out_game/prompt.py 의 SYSTEM 위 주석에 있다."""
         present = {
             'A 패치 노트는 일부 조각': '패치 노트 전체가 아니라 일부 조각이다',
             'A 전체 요약인 척 금지': '전체를 요약한 것처럼 말하지 말고',
@@ -164,6 +164,9 @@ class PromptTest(unittest.TestCase):
             'G 의도는 전하되 강해졌다고 하지 않음': '라이엇이 밝힌 의도는 전해도 되지만',
             'H 재료와 조합 비용': '하위 재료와 조합 비용',
             'J 출처 주소와 문서ID 생략': '출처 주소와 문서ID 는',
+            '① 자료가 없다는 말에는 근거 번호 없음': '자료가 없다는 말에는 [근거 N] 을 붙이지 않는다',
+            '② 근거 번호는 하나씩 따로': '[근거 1] [근거 2] 처럼 하나씩 따로',
+            '③ 라이엇의 승률 언급은 통계가 아님': '라이엇의 설명이라고 밝히고 통계처럼 말하지 않는다',
         }
         for fix, phrase in present.items():
             with self.subTest(fix=fix):
