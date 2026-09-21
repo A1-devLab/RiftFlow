@@ -1,6 +1,6 @@
-"""실행: python -m knowledge update"""
 import argparse
 import sys
+import json
 from pathlib import Path
 from .collector import DB_PATH, connect, update
 
@@ -14,12 +14,26 @@ def main():
     search = sub.add_parser('search', help='이름 또는 패치 본문 검색')
     search.add_argument('keyword')
     search.add_argument('--kind', choices=['champion', 'item', 'rune', 'patch'])
+    changes = sub.add_parser('changes', help='구조화한 패치 변경 사항 조회')
+    changes.add_argument('--patch')
+    changes.add_argument('--kind', choices=['champion', 'item', 'rune'])
+    changes.add_argument('--type', choices=['buff', 'nerf', 'adjusted', 'unknown', 'unchanged'])
+    changes.add_argument('--name')
+    sync = sub.add_parser('sync-patch', help='지정한 공식 패치 노트 수집')
+    sync.add_argument('patch')
     args = parser.parse_args()
     db = connect(args.db)
     try:
         if args.command == 'update':
             update(db, args.patches)
             print(f'DB: {args.db.resolve()}')
+        elif args.command == 'changes':
+            from .out_game import get_patch_changes
+            print(json.dumps(get_patch_changes(args.patch, kind=args.kind, change_type=args.type,
+                  name=args.name, db_path=args.db), ensure_ascii=False, indent=2))
+        elif args.command == 'sync-patch':
+            from .out_game import sync_patch
+            print(json.dumps(sync_patch(args.patch, db_path=args.db), ensure_ascii=False, indent=2))
         elif args.command == 'status':
             rows = db.execute('SELECT kind, version, COUNT(*) FROM records GROUP BY kind, version').fetchall()
             for kind, version, count in rows:

@@ -1,8 +1,3 @@
-"""Translate the collector's SQLite records into RAG documents.
-
-Versions are exact source versions. No patch/Data Dragon conversion is guessed.
-Each call opens its own connection, suitable for background GUI workers.
-"""
 import json
 import re
 import sqlite3
@@ -36,9 +31,11 @@ def as_document(row):
         content = json.loads(row["content"])
     except (ValueError, TypeError):
         content = None
-    # Packaged examples use the same normalized format as the team's RAG fixture.
     if isinstance(content, dict) and content.get("doc_id") and "text" in content:
-        return dict(content)
+        return dict(content, data_type=kind, patch_version=version,
+                    collected_at=row.get('collected_at'),
+                    sample_match_count=row.get('sample_match_count'),
+                    source=row.get('source', 'Riot Games'))
     entity = content if isinstance(content, dict) else {}
     fields = {}
     lines = [row["name"]]
@@ -52,16 +49,24 @@ def as_document(row):
             gold = entity.get("gold") or {}
             fields = {"gold_total": gold.get("total"), "gold_base": gold.get("base"),
                       "builds_from": entity.get("from", []), "builds_into": entity.get("into", []),
-                      "purchasable": gold.get("purchasable")}
+                      "purchasable": gold.get("purchasable"), "stats": entity.get('stats', {})}
             if gold.get("total") is not None:
                 lines.append("가격: %s골드" % gold["total"])
         elif kind == "champion":
-            fields = {"ddragon_tags": entity.get("tags", []), "resource": entity.get("partype")}
+            fields = {"ddragon_tags": entity.get("tags", []), "resource": entity.get("partype"),
+                      "stats": entity.get("stats", {})}
+            if fields['stats']:
+                lines.append('기본 능력치: ' + json.dumps(fields['stats'], ensure_ascii=False))
+        elif kind == "rune":
+            fields = {"key": entity.get('key'), "short_description": plain(entity.get('shortDesc'))}
     return {"doc_id": "%s:%s:%s" % (kind, version, row["entity_id"]),
             "kind": kind, "entity_id": row["entity_id"], "version": version,
             "subject_name": row["name"], "title": row["name"],
             "text": "\n".join(lines), "source_url": row["source_url"],
             "content_hash": row["content_hash"], "updated_at": row["updated_at"],
+            "data_type": kind, "patch_version": version,
+            "collected_at": row.get('collected_at'), "sample_match_count": row.get('sample_match_count'),
+            "source": row.get('source', 'Riot Games'),
             "fields": fields, "situation_tags": []}
 
 
@@ -83,8 +88,23 @@ def get_documents(patch=None, kind=None, *, db_path="data/riftflow.db"):
     for row in selected:
         if row["kind"] == "item":
             entity = json.loads(row["content"])
-            # Exclude explicitly non-Summoner's Rift items. No ID-length heuristic.
             if entity.get("maps") and not entity["maps"].get("11", False):
                 continue
         result.append(as_document(row))
+    if kind in (None, 'patch'):
+        from .out_game import get_patch_changes
+        patch_rows = [row['version'] for row in selected if row['kind'] == 'patch']
+        structured_patch = patch or max(patch_rows, key=version_key, default=None)
+        for change in (get_patch_changes(structured_patch, db_path=db_path) if structured_patch else []):
+            label = {'buff': '버프 상향', 'nerf': '너프 하향', 'adjusted': '복합 변경',
+                     'unknown': '방향 미확인', 'unchanged': '수치 동일'}[change['change_type']]
+            text = '\n'.join([change['entity_name'], label, change['summary']] +
+                             [c['ability'] + ' ' + c['raw_text'] for c in change['changes']])
+            result.append({'doc_id': f"patch-change:{change['patch_version']}:{change['source_url']}:{change['entity_id']}",
+                'kind': 'patch', 'entity_id': change['entity_id'], 'version': change['patch_version'],
+                'title': change['entity_name'] + ' 패치 변경', 'subject_name': change['entity_name'],
+                'text': text, 'source_url': change['source_url'], 'fields': change,
+                'situation_tags': [], 'data_type': 'patch_change',
+                'patch_version': change['patch_version'], 'collected_at': change['collected_at'],
+                'sample_match_count': change['sample_match_count'], 'source': change['source']})
     return result
