@@ -1,4 +1,3 @@
-"""실행: python -m knowledge update"""
 import argparse
 import sys
 import json

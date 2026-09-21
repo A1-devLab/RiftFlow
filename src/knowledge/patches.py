@@ -1,4 +1,3 @@
-"""Conservative extraction of Riot patch sections; raw evidence is always kept."""
 import re
 from html.parser import HTMLParser
 
@@ -38,7 +37,6 @@ class PatchParser(HTMLParser):
 
 
 def direction(stat, before, after):
-    """Only compare unambiguous scalar/rank lists and known stat semantics."""
     if any(k in stat for k in ('받는', '감소량', '피해 감소', '잃은', '잃는')):
         return 'unknown'
     lower = ('재사용 대기시간', '마나 소모량', '기력 소모량', 'cooldown', 'mana cost', '총 가격', 'total cost')
@@ -52,7 +50,6 @@ def direction(stat, before, after):
     simple = bool(re.fullmatch(pattern, before) and re.fullmatch(pattern, after))
     number = r'[-+]?\d+(?:\.\d+)?'
     skeleton = lambda value: re.sub(number, '#', re.sub(r'\s+', '', value))
-    # Identical formula wording: compare corresponding coefficients, not prose.
     if not simple and skeleton(before) != skeleton(after):
         return 'unknown'
     if simple and re.sub(r'[\d\s./+\-]', '', before) != re.sub(r'[\d\s./+\-]', '', after):
@@ -76,7 +73,6 @@ def direction(stat, before, after):
 
 
 def parse_patch(html):
-    """Extract only main champion/item/rune sections, excluding other modes."""
     section = None
     entity = None
     ability = ''
@@ -113,7 +109,6 @@ def parse_patch(html):
         directions = {c['direction'] for c in entity['changes']} - {'unchanged'}
         entity['change_type'] = (next(iter(directions)) if len(directions) == 1
                                  else 'adjusted' if directions else 'unknown')
-        # Explicit editorial summaries take precedence over numerical heuristics.
         summary = entity['summary']
         buff = bool(re.search(r'상향|강화|\bbuff', summary, re.I))
         nerf = bool(re.search(r'하향|약화|\bnerf', summary, re.I))

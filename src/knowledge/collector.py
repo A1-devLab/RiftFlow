@@ -1,4 +1,3 @@
-"""RiftFlow 맛보기: Python 3.10+ 표준 라이브러리만 사용합니다."""
 import hashlib
 import json
 import re
@@ -22,7 +21,6 @@ def fetch(url):
 
 
 class Page(HTMLParser):
-    """공식 페이지의 링크와 본문을 읽는 간단한 HTML 파서."""
     def __init__(self, html):
         super().__init__(convert_charrefs=True)
         self.links, self.text, self.main, self.heading = [], [], [], []
@@ -104,7 +102,6 @@ def save(db, kind, version, entity_id, name, content, url):
 
 
 def store_patch(db, html, url):
-    """Caller owns the transaction. Replace corrections for this article only."""
     page = Page(html)
     title = ' '.join(page.heading)
     content = '\n'.join(page.main or page.text)
@@ -139,7 +136,6 @@ def update(db, limit=3):
     def add(kind, version, entity_id, name, content, url):
         counts[save(db, kind, version, entity_id, name, content, url)] += 1
 
-    # 모든 다운로드가 성공한 경우에만 이번 업데이트를 DB에 반영합니다.
     with db:
         version = json.loads(fetch(f'{DDRAGON}/api/versions.json'))[0]
         print(f'Data Dragon 버전: {version}', flush=True)

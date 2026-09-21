@@ -1,8 +1,3 @@
-"""Translate the collector's SQLite records into RAG documents.
-
-Versions are exact source versions. No patch/Data Dragon conversion is guessed.
-Each call opens its own connection, suitable for background GUI workers.
-"""
 import json
 import re
 import sqlite3
@@ -36,7 +31,6 @@ def as_document(row):
         content = json.loads(row["content"])
     except (ValueError, TypeError):
         content = None
-    # Packaged examples use the same normalized format as the team's RAG fixture.
     if isinstance(content, dict) and content.get("doc_id") and "text" in content:
         return dict(content, data_type=kind, patch_version=version,
                     collected_at=row.get('collected_at'),
@@ -94,7 +88,6 @@ def get_documents(patch=None, kind=None, *, db_path="data/riftflow.db"):
     for row in selected:
         if row["kind"] == "item":
             entity = json.loads(row["content"])
-            # Exclude explicitly non-Summoner's Rift items. No ID-length heuristic.
             if entity.get("maps") and not entity["maps"].get("11", False):
                 continue
         result.append(as_document(row))

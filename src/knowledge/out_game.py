@@ -1,4 +1,3 @@
-"""Read-only structured patch queries and explicit patch synchronization."""
 import json
 import re
 import sqlite3
@@ -36,7 +35,6 @@ def get_patch_changes(patch=None, *, kind=None, change_type=None, name=None,
 
 
 def sync_patch(patch, *, source_url=None, db_path='data/riftflow.db'):
-    """Update one official Korean article; no Data Dragon version inference."""
     from .collector import Page, connect, fetch, store_patch
     if not re.fullmatch(r'\d{1,2}\.\d{1,2}', patch):
         raise ValueError('패치는 25.18 같은 표시 버전이어야 합니다.')
