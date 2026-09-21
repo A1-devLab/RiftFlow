@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'src'))
 
 from rag.retrieve import search, sources_of  # noqa: E402
-from rag.store import build_index, load_documents  # noqa: E402
+from rag.store import build_index, chunk_document, load_documents, sections  # noqa: E402
 
 FIXTURES = ROOT / 'tests' / 'fixtures'
 QUESTIONS = FIXTURES / 'rag' / 'questions.json'
@@ -164,6 +164,57 @@ class NameMatchTest(unittest.TestCase):
     def test_repeated_word_is_counted_once(self):
         from rag.retrieve import terms_of
         self.assertEqual(terms_of('무한의 대검이랑 처형인의 대검 비교해줘').count('대검'), 1)
+
+
+class PatchSectionTest(unittest.TestCase):
+    """패치 노트를 항목(챔피언·아이템) 단위로 자르는지 본다.
+
+    400자로만 자르면 조각 이름이 모두 '패치 노트' 라서 '카시오페아 뭐 바뀜?' 이 이름 점수를 못 받았고,
+    항목이 길면 뒷 조각이 누구 이야기인지 잃었다 (실제 DB 에서 '다르킨의 글레이브' 수치가 챔피언 이름 없이 들어왔다).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.chunks = build_index(load_documents(FIXTURES / 'rag' / 'documents_ddragon.json'))
+
+    def patch_doc(self, text):
+        return {'doc_id': 'patch:x', 'kind': 'patch', 'entity_id': 'x', 'version': '26.18',
+                'subject_name': '26.18 패치 노트', 'title': '26.18 패치 노트',
+                'source_url': 'https://example.com', 'text': text}
+
+    def test_heading_lines_start_sections(self):
+        lines = ['머리말', '바드', '방어력', ': 34 ⇒', '32', '카시오페아', 'Q 피해량']
+        self.assertEqual(sections(lines, {'바드', '카시오페아'}),
+                         [(None, ['머리말']), ('바드', ['바드', '방어력', ': 34 ⇒', '32']),
+                          ('카시오페아', ['카시오페아', 'Q 피해량'])])
+
+    def test_long_section_keeps_its_name_on_every_chunk(self):
+        text = '\n'.join(['제리'] + ['설명 %02d ' % n + '가' * 30 for n in range(12)])
+        chunks = chunk_document(self.patch_doc(text), max_chars=120, overlap_lines=0, headings={'제리'})
+        self.assertGreater(len(chunks), 1)
+        for chunk in chunks:
+            self.assertEqual(chunk['subject_name'], '제리')
+            self.assertTrue(chunk['text'].startswith('제리\n'))
+            self.assertEqual(chunk['doc_id'], 'patch:x')
+            self.assertEqual(chunk['title'], '26.18 패치 노트')
+
+    def test_without_names_patch_is_cut_as_before(self):
+        text = '바드\n방어력\n: 34 ⇒\n32'
+        chunk = chunk_document(self.patch_doc(text))[0]
+        self.assertIsNone(chunk['section'])
+        self.assertEqual(chunk['subject_name'], '26.18 패치 노트')
+
+    def test_champion_named_only_in_patch_body_is_found(self):
+        patch = [row['chunk'] for row in search(self.chunks, '카시오페아 뭐 바뀜?')
+                 if row['chunk']['kind'] == 'patch']
+        self.assertTrue(patch)
+        self.assertEqual({chunk['section'] for chunk in patch}, {'카시오페아'})
+        # 변경 전후 수치(⇒)가 있는 조각까지 들어온다.
+        self.assertTrue(any('⇒' in chunk['text'] for chunk in patch))
+
+    def test_patch_question_gets_the_champion_section_first(self):
+        top = search(self.chunks, '바드 이번에 너프됐어?')[0]['chunk']
+        self.assertEqual((top['kind'], top['section']), ('patch', '바드'))
 
 
 if __name__ == '__main__':
