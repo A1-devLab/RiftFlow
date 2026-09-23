@@ -55,7 +55,7 @@ class OutGamePage(QWidget):
         self.refresh_button.clicked.connect(self.profileRequested.emit)
         title.addWidget(self.refresh_button)
         info.addLayout(title)
-        self.rank = _label("롤 클라이언트 로그인 후 소환사 정보가 표시됩니다.", "subtle")
+        self.rank = _label("롤 클라이언트 로그인을 자동으로 기다리고 있습니다.", "subtle")
         info.addWidget(self.rank)
         self.record = _label("최근 전적을 불러오지 않았습니다.", "record")
         info.addWidget(self.record)
