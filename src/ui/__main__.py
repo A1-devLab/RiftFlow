@@ -18,7 +18,7 @@ from rag.config import load_env
 from rag.gemini import DEFAULT_MODEL, generate
 from game_phases.out_game.prompt import build as build_out_game_prompt
 from game_phases.out_game.service import classify as classify_out_game, search_text as out_game_search_text
-from riot import get_current_summoner, get_recent_matches, get_solo_rank
+from riot import get_current_summoner, get_recent_matches, get_solo_rank, start_login_watcher
 from .pages.out_game import OutGamePage
 from .services import ask_database, create_demo, sync_database
 
@@ -88,6 +88,8 @@ class Job(QThread):
 
 
 class Window(QMainWindow):
+    riot_login_detected = Signal(object)
+
     def __init__(self, data_dir):
         super().__init__()
         self.data_dir = Path(data_dir)
@@ -96,6 +98,8 @@ class Window(QMainWindow):
         self.live_path = self.data_dir / 'riftflow.db'
         create_demo(self.demo_path)
         self.jobs = []
+        self.pending_riot_player = None
+        self.login_watcher = None
         self.setWindowTitle('RiftFlow · Desktop MVP')
         self.resize(1360, 850)
         self.setMinimumSize(960, 690)
@@ -146,6 +150,12 @@ class Window(QMainWindow):
         self.make_settings()
         self.navigate(0)
         self.reload()
+        self.riot_login_detected.connect(self.on_riot_login_detected)
+        if os.environ.get('RIOT_API_KEY'):
+            self.login_watcher = start_login_watcher(self.riot_login_detected.emit)
+            self.status.setText('롤 클라이언트 로그인을 자동으로 기다리고 있습니다.')
+        else:
+            self.out_game.rank.setText('Riot API 키를 설정하면 롤 클라이언트 로그인을 자동 감지합니다.')
 
     def page(self, title, subtitle):
         widget = QWidget()
@@ -297,6 +307,10 @@ class Window(QMainWindow):
         self.sync.setEnabled(True)
         self.mode.setEnabled(True)
         self.out_game.set_busy(False)
+        if not self.jobs and self.pending_riot_player is not None:
+            player = self.pending_riot_player
+            self.pending_riot_player = None
+            QTimer.singleShot(0, lambda: self.load_riot_profile(player))
 
     def failed(self, message):
         self.status.setText(message)
@@ -330,19 +344,26 @@ class Window(QMainWindow):
         self.status.setText('완료 · ' + ('Gemini 답변' if result['generated'] else '공식 자료 검색'))
 
     @staticmethod
-    def riot_profile():
-        player = get_current_summoner()
+    def riot_profile(player=None):
+        player = player or get_current_summoner()
         return {
             'player': player,
             'rank': get_solo_rank(player.puuid),
             'matches': get_recent_matches(player.puuid, 20),
         }
 
-    def load_riot_profile(self):
+    def on_riot_login_detected(self, player):
+        if self.jobs:
+            self.pending_riot_player = player
+            self.status.setText('롤 로그인을 감지했습니다. 진행 중인 작업 후 전적을 불러옵니다.')
+            return
+        self.load_riot_profile(player)
+
+    def load_riot_profile(self, player=None):
         if self.jobs:
             return
         self.status.setText('롤 클라이언트와 최근 전적을 확인하고 있습니다.')
-        self.start_job(self.riot_profile, self.show_riot_profile)
+        self.start_job(lambda: self.riot_profile(player), self.show_riot_profile)
 
     def show_riot_profile(self, payload):
         self.out_game.show_profile(payload)
