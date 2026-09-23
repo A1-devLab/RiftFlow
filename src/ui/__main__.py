@@ -16,6 +16,10 @@ from PySide6.QtWidgets import (
 from knowledge.documents import get_documents
 from rag.config import load_env
 from rag.gemini import DEFAULT_MODEL, generate
+from game_phases.out_game.prompt import build as build_out_game_prompt
+from game_phases.out_game.service import classify as classify_out_game, search_text as out_game_search_text
+from riot import get_current_summoner, get_recent_matches, get_solo_rank
+from .pages.out_game import OutGamePage
 from .services import ask_database, create_demo, sync_database
 
 STYLE = """
@@ -93,7 +97,7 @@ class Window(QMainWindow):
         create_demo(self.demo_path)
         self.jobs = []
         self.setWindowTitle('RiftFlow · Desktop MVP')
-        self.resize(1180, 800)
+        self.resize(1360, 850)
         self.setMinimumSize(960, 690)
         root = QWidget()
         row = QHBoxLayout(root)
@@ -108,7 +112,7 @@ class Window(QMainWindow):
         nav.addSpacing(32)
         self.stack = QStackedWidget()
         self.nav_buttons = []
-        for i, name in enumerate(('시작하기', '게임 자료', '코치에게 질문', '연결 및 신청')):
+        for i, name in enumerate(('Out game', '게임 자료', '코치에게 질문', '연결 및 신청')):
             button = QPushButton(name)
             button.setObjectName('nav')
             button.setCheckable(True)
@@ -154,34 +158,10 @@ class Window(QMainWindow):
         return layout
 
     def make_home(self):
-        layout = self.page('내 플레이를 이해하는 첫걸음', '공식 자료를 살펴보고, 질문에 맞는 근거를 찾아보세요.')
-        metrics = QHBoxLayout()
-        self.metrics = []
-        for title in ('아이템', '챔피언', '룬', '패치 노트'):
-            card = QFrame()
-            card.setObjectName('card')
-            box = QVBoxLayout(card)
-            box.setContentsMargins(20, 18, 20, 18)
-            box.addWidget(label(title, 'muted'))
-            number = label('0', 'metric')
-            box.addWidget(number)
-            self.metrics.append(number)
-            metrics.addWidget(card)
-        layout.addLayout(metrics)
-        card = QFrame()
-        card.setObjectName('card')
-        content = QVBoxLayout(card)
-        content.setContentsMargins(24, 22, 24, 22)
-        content.addWidget(label('01   자료 확인 → 02   근거 검색 → 03   이유 이해'))
-        content.addWidget(label('현재 MVP는 자료 DB와 챗봇을 연결했습니다.\n전적 분석, 룬 자동 적용, 실시간 아이템 추천은 다음 개발 단계입니다.', 'muted'))
-        button = QPushButton('코치에게 질문하기')
-        button.setObjectName('primary')
-        button.clicked.connect(lambda: self.navigate(2))
-        content.addWidget(button)
-        layout.addWidget(card)
-        self.home_note = label('', 'muted')
-        layout.addWidget(self.home_note)
-        layout.addStretch()
+        self.out_game = OutGamePage()
+        self.out_game.askRequested.connect(self.ask_out_game)
+        self.out_game.profileRequested.connect(self.load_riot_profile)
+        self.stack.addWidget(self.out_game)
 
     def make_library(self):
         layout = self.page('게임 자료', '박시영의 수집 DB를 읽어 이름, 설명과 출처를 보여줍니다.')
@@ -265,9 +245,6 @@ class Window(QMainWindow):
             self.status.setText('DB를 읽지 못했습니다. 파일 상태를 확인하세요.')
         demo = self.mode.currentIndex() == 0
         self.badge.setText('예시 데이터 · 최신 아님' if demo else '수집한 자료')
-        self.home_note.setText('예시 자료 10건으로 기능을 체험합니다. 사용자 전적이나 실시간 경기를 표시하지 않습니다.' if demo else '로컬 DB에 저장된 최신 자료입니다. 자료가 없다면 연결 및 신청에서 업데이트하세요.')
-        for number, kind in zip(self.metrics, ('item', 'champion', 'rune', 'patch')):
-            number.setText(str(sum(d['kind'] == kind for d in self.documents)))
         self.version.clear()
         self.version.addItem('최신 수집 자료 · 패치 미지정 (출처별 버전 확인)', None)
         for version in sorted({d['version'] for d in self.documents}):
@@ -307,6 +284,7 @@ class Window(QMainWindow):
         self.send.setEnabled(False)
         self.sync.setEnabled(False)
         self.mode.setEnabled(False)
+        self.out_game.set_busy(True)
         job.result.connect(callback)
         job.failed.connect(self.failed)
         job.finished.connect(lambda: self.job_done(job))
@@ -318,10 +296,57 @@ class Window(QMainWindow):
         self.send.setEnabled(True)
         self.sync.setEnabled(True)
         self.mode.setEnabled(True)
+        self.out_game.set_busy(False)
 
     def failed(self, message):
         self.status.setText(message)
         self.reply.setPlainText(message)
+        self.out_game.show_error(message)
+
+    def ask_out_game(self, question):
+        if self.jobs:
+            return
+        types = classify_out_game(question)
+        analysis = {'phase': 'out_game', 'question_types': types}
+        model = self.model.text().strip() or DEFAULT_MODEL
+        generator = None
+        if os.environ.get('GEMINI_API_KEY'):
+            generator = lambda prompt: generate(prompt, model=model, retries=0)
+        self.status.setText('Out game 질문에 맞는 공식 자료를 찾고 있습니다.')
+        self.start_job(
+            lambda: ask_database(
+                self.db_path,
+                question,
+                generate=generator,
+                analysis=analysis,
+                prompt_builder=build_out_game_prompt,
+                retrieval_question=out_game_search_text(question, types),
+            ),
+            self.show_out_game_answer,
+        )
+
+    def show_out_game_answer(self, result):
+        self.out_game.show_answer(result)
+        self.status.setText('완료 · ' + ('Gemini 답변' if result['generated'] else '공식 자료 검색'))
+
+    @staticmethod
+    def riot_profile():
+        player = get_current_summoner()
+        return {
+            'player': player,
+            'rank': get_solo_rank(player.puuid),
+            'matches': get_recent_matches(player.puuid, 20),
+        }
+
+    def load_riot_profile(self):
+        if self.jobs:
+            return
+        self.status.setText('롤 클라이언트와 최근 전적을 확인하고 있습니다.')
+        self.start_job(self.riot_profile, self.show_riot_profile)
+
+    def show_riot_profile(self, payload):
+        self.out_game.show_profile(payload)
+        self.status.setText('로그인한 플레이어와 최근 전적을 불러왔습니다.')
 
     def ask(self):
         if self.jobs:
