@@ -112,7 +112,7 @@ class Window(QMainWindow):
         nav.addSpacing(32)
         self.stack = QStackedWidget()
         self.nav_buttons = []
-        for i, name in enumerate(('Out game', '게임 자료', '코치에게 질문', '연결 및 신청')):
+        for i, name in enumerate(('전적', '게임 자료', '코치에게 질문', '설정 및 데이터')):
             button = QPushButton(name)
             button.setObjectName('nav')
             button.setCheckable(True)
@@ -208,7 +208,7 @@ class Window(QMainWindow):
         layout.addLayout(form)
 
     def make_settings(self):
-        layout = self.page('연결 및 신청', '비공개 팀 개발용 설정입니다. API 키는 채팅·GitHub에 올리지 마세요.')
+        layout = self.page('설정 및 데이터', 'API 연결 상태와 공식 게임 자료 업데이트를 관리합니다.')
         self.connection = label('', 'badge')
         layout.addWidget(self.connection)
         self.model = QLineEdit(os.environ.get('GEMINI_MODEL') or DEFAULT_MODEL)
@@ -222,7 +222,7 @@ class Window(QMainWindow):
         portal = QPushButton('라이엇 개발자 포털 열기')
         portal.clicked.connect(lambda: open_link(QUrl('https://developer.riotgames.com/')))
         layout.addWidget(portal)
-        layout.addWidget(label('1. 라이엇 계정 로그인 → 개발용 키 확인\n2. 기존 RiftFlow 등록 여부 확인\n3. 비공개 캡스톤용 Personal Key 신청\n\n신청용 문안: docs/riot-application.md\n신청은 포털에서 로그인한 사용자가 제출해야 합니다.', 'muted'))
+        layout.addWidget(label('Riot API 키와 Gemini API 키는 .env에서 관리합니다. 실제 키는 채팅이나 GitHub에 올리지 마세요.\n\n라이엇 신청 기록: docs/riot-application.md', 'muted'))
         layout.addStretch()
         layout.addWidget(label(LEGAL, 'muted'))
 
@@ -312,7 +312,7 @@ class Window(QMainWindow):
         generator = None
         if os.environ.get('GEMINI_API_KEY'):
             generator = lambda prompt: generate(prompt, model=model, retries=0)
-        self.status.setText('Out game 질문에 맞는 공식 자료를 찾고 있습니다.')
+        self.status.setText('게임 밖 코치 질문에 맞는 공식 자료를 찾고 있습니다.')
         self.start_job(
             lambda: ask_database(
                 self.db_path,
@@ -357,7 +357,7 @@ class Window(QMainWindow):
         use_ai = self.ai.isChecked()
         model = self.model.text().strip()
         if use_ai and (not os.environ.get('GEMINI_API_KEY') or not model):
-            self.reply.setPlainText('Gemini 키 또는 모델 ID가 없습니다. 연결 및 신청 화면과 .env 설정을 확인하세요. 근거 검색만 하려면 Gemini 사용을 끄세요.')
+            self.reply.setPlainText('Gemini 키 또는 모델 ID가 없습니다. 설정 및 데이터 화면과 .env 설정을 확인하세요. 근거 검색만 하려면 Gemini 사용을 끄세요.')
             return
         path, version = self.db_path, self.version.currentData()
         generator = (lambda prompt: generate(prompt, model=model, retries=0)) if use_ai else None
