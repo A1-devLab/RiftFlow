@@ -1,0 +1,176 @@
+{
+  "_note": "논의용 초안입니다. rag.answer_question 의 입력과 답변이 만족해야 할 조건을 적어 둔 케이스 모음입니다. 기대 답변 문장이 아니라 조건만 적습니다. doc_id 는 documents_ddragon.json 의 실제 값입니다. 입력의 patch 는 사용자가 말하는 패치 번호(26.18)이며 Data Dragon 버전(16.18.1)과 다릅니다.",
+  "patch": "26.18",
+  "cases": [
+    {
+      "case_id": "normal_item_situational",
+      "description": "상황이 주어진 정상 질문. 근거 문서가 존재한다.",
+      "input": {
+        "question": "상대 팀에 단일 대상 궁극기가 많은데 뭘 올려야 하나요?",
+        "patch": "26.18",
+        "analysis": null
+      },
+      "fixture_documents": "rag/documents_ddragon.json",
+      "expect": {
+        "insufficient_evidence": false,
+        "sources_min": 1,
+        "must_cite_doc_ids": [
+          "ddragon:item:3139:16.18.1"
+        ],
+        "notes": "추천 아이템과 함께 왜 그 상황에서 유효한지 근거가 답변에 포함되어야 한다. 헤르메스의 시미터 또는 수은 장식띠 계열."
+      }
+    },
+    {
+      "case_id": "normal_rune_by_playstyle",
+      "description": "픽창 성향 답변을 반영한 룬 질문.",
+      "input": {
+        "question": "가렌으로 라인전에서 계속 붙어서 싸우는 편인데 어떤 핵심 룬이 맞나요?",
+        "patch": "26.18",
+        "analysis": {
+          "champion": "Garen",
+          "playstyle": {
+            "trade_preference": "지속",
+            "lane_aggression": "높음"
+          }
+        }
+      },
+      "fixture_documents": "rag/documents_ddragon.json",
+      "expect": {
+        "insufficient_evidence": false,
+        "sources_min": 1,
+        "must_cite_doc_ids": [
+          "ddragon:rune:8010:16.18.1"
+        ],
+        "notes": "정복자를 고른 이유와, 감전(8112) 같은 순간 폭딜 룬이 왜 이 성향에 덜 맞는지 함께 설명해야 한다."
+      }
+    },
+    {
+      "case_id": "anti_heal",
+      "description": "상대 회복 대응. 가격대가 다른 선택지가 두 개 있다.",
+      "input": {
+        "question": "상대 탑이 계속 회복해서 못 잡겠어요",
+        "patch": "26.18",
+        "analysis": null
+      },
+      "fixture_documents": "rag/documents_ddragon.json",
+      "expect": {
+        "insufficient_evidence": false,
+        "sources_min": 1,
+        "must_cite_doc_ids": [
+          "ddragon:item:3123:16.18.1"
+        ],
+        "notes": "처형인의 대검(800골드)을 먼저 제시하고 필멸자의 운명(3000골드)으로의 상위 빌드를 설명하면 좋다. 골드 여유에 따라 답이 달라져야 한다."
+      }
+    },
+    {
+      "case_id": "insufficient_evidence",
+      "description": "근거 문서가 없는 질문. 지어내지 않고 근거 부족을 반환해야 한다.",
+      "input": {
+        "question": "26.19 패치에서 바뀐 정글 아이템 알려주세요",
+        "patch": "26.19",
+        "analysis": null
+      },
+      "fixture_documents": "rag/documents_empty.json",
+      "expect": {
+        "insufficient_evidence": true,
+        "sources_min": 0,
+        "must_cite_doc_ids": [],
+        "notes": "모델의 사전 지식으로 추측해서 답하면 실패. 자료가 없다는 사실을 알려야 한다."
+      }
+    },
+    {
+      "case_id": "off_topic_guard",
+      "description": "롤과 무관한 질문. 토큰 낭비 방지 안전장치가 걸려야 한다.",
+      "input": {
+        "question": "내일 서울 날씨 어때? 그리고 파이썬으로 크롤러 짜는 법 알려줘",
+        "patch": "26.18",
+        "analysis": null
+      },
+      "fixture_documents": "rag/documents_ddragon.json",
+      "expect": {
+        "insufficient_evidence": false,
+        "sources_min": 0,
+        "must_cite_doc_ids": [],
+        "off_topic": true,
+        "notes": "검색과 생성으로 넘기기 전에 차단되어야 한다. 차단 시점에 Gemini 를 호출하지 않는 것이 목표."
+      }
+    },
+    {
+      "case_id": "out_of_scope_mode",
+      "description": "협곡이 아닌 모드에 대한 질문. 롤 질문이지만 RiftFlow 범위 밖이다.",
+      "input": {
+        "question": "칼바람나락에서 시미터 올릴만 한가요?",
+        "patch": "26.18",
+        "analysis": null
+      },
+      "fixture_documents": "rag/documents_ddragon.json",
+      "expect": {
+        "insufficient_evidence": true,
+        "sources_min": 0,
+        "must_cite_doc_ids": [],
+        "out_of_scope": true,
+        "notes": "협곡 기준 자료만 가지고 있으므로 칼바람 기준으로 답하면 안 된다. 같은 이름의 아이템이라도 모드별로 골드와 능력치가 다르다. off_topic_guard 와 구분할 것. 이쪽은 롤 질문이므로 차단이 아니라 범위 밖임을 알려야 한다."
+      }
+    },
+    {
+      "case_id": "patch_missing",
+      "description": "패치를 지정하지 않은 질문. 결측값과 0 을 구분하는지 확인한다.",
+      "input": {
+        "question": "무한의 대검 언제 올리는 게 좋나요?",
+        "patch": null,
+        "analysis": null
+      },
+      "fixture_documents": "rag/documents_ddragon.json",
+      "expect": {
+        "insufficient_evidence": false,
+        "sources_min": 1,
+        "must_cite_doc_ids": [
+          "ddragon:item:3031:16.18.1"
+        ],
+        "notes": "patch 가 null 이면 기본 패치 처리 방식을 정해야 한다. 0 이나 빈 문자열과 구분할 것."
+      }
+    },
+    {
+      "case_id": "item_name_not_confused",
+      "description": "이름이 비슷한 아이템이 근거에 섞이지 않아야 한다.",
+      "input": {
+        "question": "무한의 대검 언제 사?",
+        "patch": "26.18",
+        "analysis": null
+      },
+      "fixture_documents": "rag/documents_ddragon.json",
+      "expect": {
+        "insufficient_evidence": false,
+        "sources_min": 1,
+        "must_cite_doc_ids": [
+          "ddragon:item:3031:16.18.1"
+        ],
+        "must_not_cite_doc_ids": [
+          "ddragon:item:3123:16.18.1",
+          "ddragon:item:1038:16.18.1"
+        ],
+        "notes": "처형인의 대검과 B.F. 대검은 '대검' 만 겹친다. 무한의 대검이 이름 전체로 맞으므로 반쯤 맞는 이름은 근거에 넣지 않는다. 섞이면 프롬프트에 상관없는 아이템이 들어간다."
+      }
+    },
+    {
+      "case_id": "patch_note_lookup",
+      "description": "패치 노트 기반 질문. 문서 하나가 통짜라 청킹이 되어야 답할 수 있다.",
+      "input": {
+        "question": "이번 패치에서 카시오페아 뭐 바뀌었어?",
+        "patch": "26.18",
+        "analysis": null
+      },
+      "fixture_documents": "rag/documents_ddragon.json",
+      "expect": {
+        "insufficient_evidence": false,
+        "sources_min": 1,
+        "must_cite_doc_ids": [
+          "patchnote:patch:league-of-legends-patch-26-18-notes:26.18"
+        ],
+        "notes": "패치 노트 문서는 전문이 16000자가 넘는다. 통째로 프롬프트에 넣지 말고 해당 챔피언 구간만 잘라 써야 한다. fixture 에는 발췌만 들어 있으므로 발췌 범위 밖을 물으면 근거 부족이 맞다."
+      }
+    }
+  ],
+  "scope": "소환사의 협곡 (맵 11)",
+  "ddragon_version": "16.18.1"
+}

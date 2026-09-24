@@ -1,0 +1,40 @@
+{
+  "description": "out_game 질문 유형 판정 평가용 질문 목록. 형식과 규칙은 같은 폴더의 README.md 참고.",
+  "types": {
+    "patch": "이번 패치에서 무엇이 바뀌었나",
+    "champion": "어떤 챔피언을 할까",
+    "item_rune": "특정 아이템·룬의 효과, 가격, 빌드",
+    "meta": "요즘 전체 흐름, 티어, 대세"
+  },
+  "cases": [
+    {"id": "b01", "set": "blind", "question": "요즘 원딜 뭐가 좋아?", "types": ["champion"]},
+    {"id": "b02", "set": "blind", "question": "룬 뭐가야해?", "types": ["item_rune"]},
+    {"id": "b03", "set": "blind", "question": "미드챔 추천해줘", "types": ["champion"]},
+    {"id": "b04", "set": "blind", "question": "현재 메타 알려줘", "types": ["meta"]},
+    {"id": "b05", "set": "blind", "question": "오늘 날씨 뭐야?", "types": []},
+    {"id": "b06", "set": "blind", "question": "점심 메뉴 추천해줘", "types": []},
+    {"id": "b07", "set": "blind", "question": "아이템 뭘 가는게 좋을까?", "types": ["item_rune"]},
+    {"id": "b08", "set": "blind", "question": "상대 챔피언 이길수있는 템트리 알려줘", "types": ["item_rune"]},
+    {"id": "b09", "set": "blind", "question": "탑 다리우스 룬 알려줘", "types": ["item_rune"]},
+    {"id": "b10", "set": "blind", "question": "이번 패치 정보 요약해줘", "types": ["patch"]},
+    {"id": "b11", "set": "blind", "question": "이번 패치에서 버프/너프받은 챔피언 알려줘", "types": ["patch"]},
+    {"id": "b12", "set": "blind", "question": "AD 챔피언 추천해줘", "types": ["champion"]},
+    {"id": "b13", "set": "blind", "question": "난이도 쉬운 챔피언 추천해줘", "types": ["champion"]},
+    {"id": "d01", "set": "dev", "question": "무한의 대검 얼마임?", "types": ["item_rune"]},
+    {"id": "d02", "set": "dev", "question": "정복자 룬 효과 뭐야", "types": ["item_rune"]},
+    {"id": "d03", "set": "dev", "question": "바드 이번에 너프 먹었어?", "types": ["patch"]},
+    {"id": "d04", "set": "dev", "question": "26.18 패치 뭐 바뀜", "types": ["patch"]},
+    {"id": "d05", "set": "dev", "question": "이번 패치 이후로 메타 어떻게 바뀌었어?", "types": ["patch", "meta"]},
+    {"id": "d06", "set": "dev", "question": "아리 요즘 할만해?", "types": ["meta"]},
+    {"id": "d07", "set": "dev", "question": "정글 뭐 해야 돼?", "types": ["champion"]},
+    {"id": "d08", "set": "dev", "question": "요즘 1티어 챔 누구야", "types": ["meta"]},
+    {"id": "d09", "set": "dev", "question": "카시오페아 상향됐는데 이제 쎔?", "types": ["patch", "meta"]},
+    {"id": "d10", "set": "dev", "question": "탑솔 뭐함?", "types": ["champion"]},
+    {"id": "d11", "set": "dev", "question": "원딜 추천", "types": ["champion"]},
+    {"id": "d12", "set": "dev", "question": "서폿 뭐가 좋음", "types": ["champion"]},
+    {"id": "d13", "set": "dev", "question": "템 뭐 사야 돼", "types": ["item_rune"]},
+    {"id": "d14", "set": "dev", "question": "이번 시즌 1티어 누구", "types": ["meta"]},
+    {"id": "d15", "set": "dev", "question": "야스오 너프 언제 풀림", "types": ["patch"]},
+    {"id": "d16", "set": "dev", "question": "롤 시스템 오류 났어", "types": []}
+  ]
+}

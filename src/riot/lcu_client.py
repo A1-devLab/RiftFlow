@@ -88,9 +88,34 @@ def _find_lcu_credentials() -> Optional[Tuple[int, str]]:
     return None
 
 
+def _current_summoner_data(credentials: Tuple[int, str]) -> Optional[dict]:
+    """LCU의 현재 소환사 응답을 확인한다. 로그인 전에는 None을 반환한다."""
+    port, password = credentials
+    token = base64.b64encode(f"riot:{password}".encode()).decode()
+    response = requests.get(
+        f"https://127.0.0.1:{port}/lol-summoner/v1/current-summoner",
+        headers={"Authorization": f"Basic {token}"},
+        timeout=3.0,
+        verify=False,
+    )
+    if response.status_code != 200:
+        return None
+    data = response.json()
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
 def is_client_logged_in() -> bool:
-    """라이엇 클라이언트가 켜져 있고 인증 정보를 읽을 수 있는지 확인."""
-    return _find_lcu_credentials() is not None
+    """프로세스 존재뿐 아니라 LCU의 현재 소환사 응답으로 로그인을 확인한다."""
+    credentials = _find_lcu_credentials()
+    if credentials is None:
+        return False
+    try:
+        data = _current_summoner_data(credentials)
+    except (requests.exceptions.RequestException, ValueError):
+        return False
+    return bool(data and data.get("gameName") and data.get("tagLine"))
 
 
 def _lcu_get(port: int, password: str, endpoint: str) -> Optional[dict]:
@@ -134,9 +159,9 @@ def get_current_summoner() -> PlayerIdentity:
 
     try:
         data = _current_summoner_data(credentials)
-    except request.exceptions.ReqeustException as e:
+    except requests.exceptions.RequestException as e:
         raise RiotApiError("LCU 통신 오류입니다.") from e
-        
+
     if data is None:
         raise ClientNotRunning("아직 로그인이 완료되지 않았습니다.")
 
@@ -144,10 +169,7 @@ def get_current_summoner() -> PlayerIdentity:
     tag_line = data.get("tagLine")
 
     if not game_name or not tag_line:
-        raise RiotApiError(
-            "LCU 응답에 gameName/tagLine이 없습니다. "
-            f"원본 응답: {data}"
-        )
+        raise RiotApiError("LCU 응답에 gameName/tagLine이 없습니다.")
 
     # LCU의 puuid/summonerId는 내부 ID라 공식 API와 호환되지 않으므로,
     # gameName#tagLine으로 공식 API(ACCOUNT-V1)를 다시 조회해서
