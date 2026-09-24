@@ -132,8 +132,11 @@ def get_current_summoner() -> PlayerIdentity:
     if credentials is None:
         raise ClientNotRunning("라이엇 클라이언트가 꺼져있거나 로그인 전입니다.")
 
-    port, password = credentials
-    data = _lcu_get(port, password, "/lol-summoner/v1/current-summoner")
+    try:
+        data = _current_summoner_data(credentials)
+    except request.exceptions.ReqeustException as e:
+        raise RiotApiError("LCU 통신 오류입니다.") from e
+        
     if data is None:
         raise ClientNotRunning("아직 로그인이 완료되지 않았습니다.")
 
