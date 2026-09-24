@@ -165,8 +165,11 @@ def get_gameflow_phase() -> Optional[str]:
     if credentials is None:
         return None
 
-    port, password = credentials
-    data = _lcu_get(port, password, "/lol-gameflow/v1/session")
+    try:
+        data = _current_summoner_data(credentials)
+    except requests.exceptions.ReqeustException as e:
+        raise RiotApiError("LCU 통신 오류입니다.") from e
+        
     if data is None:
         return None
     return data.get("phase")
