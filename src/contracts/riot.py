@@ -2,7 +2,8 @@
 src/contracts/riot.py
 
 docs/interfaces.md의 riot 모듈 계약(get_player, get_recent_matches, get_live_state)에
-대응하는 공통 데이터 형식.
+대응하는 공통 데이터 형식. PlayerLiveStats/TeamGoldTotals/PostGameSummary는
+챔피언 선택/인게임/경기 결과 기능을 dict에서 데이터클래스로 편입하며 추가됨.
 
 이 파일에는 데이터 형식과 예외만 둔다. 실제 구현은 src/riot/ 아래에 있다.
 
@@ -17,7 +18,7 @@ docs/interfaces.md의 riot 모듈 계약(get_player, get_recent_matches, get_liv
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +96,95 @@ class LiveState:
 
 
 # ---------------------------------------------------------------------------
-# 5. 오류 표현: "호출 제한 / 검색 결과 없음"은 예외로 구분
+# 5. get_scoreboard 출력: 인게임 실시간 스코어보드 (개별 선수 항목)
+#    (구 lcu_client 챔피언 선택/인게임 기능을 dict에서 데이터클래스로 편입 - riot_module_io.md 논의 반영)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class PlayerLiveStats:
+    """인게임 실시간 스코어보드의 개별 선수 항목. get_scoreboard()는 이 타입의 리스트를 반환한다."""
+
+    summoner_name: Optional[str]     # Riot ID 전환 과정에서 비어올 수 있음
+    champion_name: str
+    team: str                        # "ORDER" 또는 "CHAOS" (라이엇 API가 주는 값 그대로)
+    position: str                    # "TOP"/"JUNGLE"/"MIDDLE"/"BOTTOM"/"UTILITY", 극초반엔 "NONE"
+    level: int
+    kills: int
+    deaths: int
+    assists: int
+    cs: int                          # 미니언 + 정글 몹 처치 수
+    is_dead: bool
+    respawn_timer: float
+    items: List[dict]                # 아이템 원본 (아직 별도 타입 없음 - 필요해지면 추가)
+    estimated_gold: float            # 추정치 - 보유 아이템 가격 합계 기준, 미구매 잔액 미반영
+
+
+# ---------------------------------------------------------------------------
+# 6. get_team_gold_totals 출력: 팀별 추정 골드 합계
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class TeamGoldTotals:
+    """팀별 추정 골드 합계. live_client.get_team_gold_totals()가 반환한다."""
+
+    order: float    # team == "ORDER"인 선수들의 estimated_gold 합
+    chaos: float    # team == "CHAOS"인 선수들의 estimated_gold 합
+
+
+# ---------------------------------------------------------------------------
+# 7. get_post_game_summary 출력: 경기 종료 후 결과 화면 요약
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class PostGameSummary:
+    """경기 종료 후 결과 화면 요약. lcu_client.get_post_game_summary()가 반환한다."""
+
+    game_duration_seconds: int
+    result: str                      # "WIN" 또는 "LOSS"
+    kills: int
+    deaths: int
+    assists: int
+    cs: int
+    cs_per_min: float
+    kill_participation_pct: float    # (kills+assists) / 팀 전체 킬 * 100
+    damage_dealt: int                # 챔피언 대상 딜량
+    damage_taken: int
+    vision_score: int
+
+
+# ---------------------------------------------------------------------------
+# 8. get_champ_select_session 출력: 챔피언 선택(픽창)의 픽/밴 현황
+#    범위는 픽/밴 현황만으로 한정 - 턴 순서/타이머는 아직 포함하지 않음 (필요해지면 확장)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ChampSelectMember:
+    """챔피언 선택의 개별 슬롯(팀원 한 명)의 픽 현황."""
+
+    cell_id: int
+    champion_id: int                    # 0 = 아직 픽 안 함
+    assigned_position: str              # 예: "top"/"jungle"/"middle"/"bottom"/"utility", 없으면 ""
+    puuid: Optional[str] = None         # 상대팀은 픽 완료 전까지 비어있을 수 있음
+
+
+@dataclass(frozen=True)
+class ChampSelectSession:
+    """챔피언 선택 세션의 픽/밴 현황. lcu_client.get_champ_select_session()이 반환한다.
+
+    상대팀(their_team)은 라이엇이 의도적으로 제한한다 - 밴 완료 및 픽 완료된
+    것만 champion_id가 채워지고, 아직 고르는 중인 실시간 호버 상태는 반영되지
+    않는다.
+    """
+
+    my_team: List[ChampSelectMember]
+    their_team: List[ChampSelectMember]
+    my_bans: List[int]                  # championId 목록 - actions의 완료된 ban에서 집계 (raw bans 필드는 안 믿음)
+    their_bans: List[int]
+    local_player_cell_id: int           # my_team 중 본인 슬롯의 cell_id
+
+
+# ---------------------------------------------------------------------------
+# 9. 오류 표현: "호출 제한 / 검색 결과 없음"은 예외로 구분
 #    ("게임 미실행"은 위의 LiveMatchStatus.NOT_IN_GAME으로 이미 표현하므로 예외 아님)
 # ---------------------------------------------------------------------------
 
