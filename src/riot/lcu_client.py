@@ -45,7 +45,7 @@ import json
 import ssl
 import threading
 import time
-from typing import Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 import psutil
 import requests
@@ -118,7 +118,7 @@ def is_client_logged_in() -> bool:
     return bool(data and data.get("gameName") and data.get("tagLine"))
 
 
-def _lcu_get(port: int, password: str, endpoint: str) -> Optional[dict]:
+def _lcu_get(port: int, password: str, endpoint: str) -> Optional[Any]:
     """LCU에 GET 요청을 보내고 JSON을 반환한다.
 
     통신 실패나 200이 아닌 응답은 예외 대신 None으로 처리한다 — 이 값을 쓰는
@@ -139,7 +139,10 @@ def _lcu_get(port: int, password: str, endpoint: str) -> Optional[dict]:
 
     if response.status_code != 200:
         return None
-    return response.json()
+    try:
+        return response.json()
+    except ValueError:
+        return None
 
 
 def get_current_summoner() -> PlayerIdentity:
@@ -187,14 +190,9 @@ def get_gameflow_phase() -> Optional[str]:
     if credentials is None:
         return None
 
-    try:
-        data = _current_summoner_data(credentials)
-    except requests.exceptions.ReqeustException as e:
-        raise RiotApiError("LCU 통신 오류입니다.") from e
-        
-    if data is None:
-        return None
-    return data.get("phase")
+    port, password = credentials
+    phase = _lcu_get(port, password, "/lol-gameflow/v1/gameflow-phase")
+    return phase if isinstance(phase, str) else None
 
 
 def _parse_champ_select_member(raw: dict) -> ChampSelectMember:

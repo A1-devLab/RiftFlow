@@ -1,6 +1,12 @@
 """Before-game terminal interaction and application service."""
 from game_phases.common import ask, show
+from riot import get_champ_select_session
 from .prompt import build
+
+
+def get_before_game_context():
+    """현재 픽창의 아군·상대 픽과 확정된 밴을 반환한다."""
+    return get_champ_select_session()
 
 
 def ask_before_game(champion, opponent, trade_preference, lane_aggression, question):

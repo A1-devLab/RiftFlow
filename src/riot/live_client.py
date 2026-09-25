@@ -152,16 +152,16 @@ def get_scoreboard() -> Optional[List[PlayerLiveStats]]:
         scoreboard.append(
             PlayerLiveStats(
                 summoner_name=player.get("summonerName") or player.get("riotIdGameName"),
-                champion_name=player.get("championName"),
-                team=player.get("team"),
-                position=player.get("position"),
-                level=player.get("level"),
-                kills=scores.get("kills"),
-                deaths=scores.get("deaths"),
-                assists=scores.get("assists"),
+                champion_name=player.get("championName") or "",
+                team=player.get("team") or "",
+                position=player.get("position") or "NONE",
+                level=int(player.get("level") or 0),
+                kills=int(scores.get("kills") or 0),
+                deaths=int(scores.get("deaths") or 0),
+                assists=int(scores.get("assists") or 0),
                 cs=scores.get("creepScore", 0),
-                is_dead=player.get("isDead"),
-                respawn_timer=player.get("respawnTimer"),
+                is_dead=bool(player.get("isDead")),
+                respawn_timer=float(player.get("respawnTimer") or 0),
                 items=items,
                 estimated_gold=estimate_gold(items),
             )
@@ -345,4 +345,3 @@ def start_live_watcher(
     thread = threading.Thread(target=_watch, daemon=True)
     thread.start()
     return thread
-

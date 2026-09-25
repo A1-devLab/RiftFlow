@@ -216,7 +216,7 @@ PUUID로 최근 경기 요약 목록을 조회한다.
 |---|---|
 | `get_champ_select_session()` | 없음 |
 | `start_champ_select_watcher(on_update, on_end=None, interval=1.0)` | 콜백 `on_update(session: ChampSelectSession)`, `on_end()` |
-| `ChampSelectSocket(on_update, on_error=None)` | 콜백 `on_update(session: ChampSelectSession)`. `.start()`/`.stop()`로 제어. 폴링 대신 웹소켓 push (`pip install websocket-client` 필요) |
+| `ChampSelectSocket(on_update, on_error=None)` | 콜백 `on_update(session: ChampSelectSession)`. `.start()`/`.stop()`로 제어. 폴링 대신 설치 의존성인 `websocket-client`를 사용한 웹소켓 push |
 
 **출력**: `ChampSelectSession | None` (챔피언 선택 중이 아니면 `None`)
 
