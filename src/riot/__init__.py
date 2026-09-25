@@ -36,6 +36,7 @@ from .lcu_client import (
 )
 from .live_client import (
     get_active_player,
+    get_active_player_name,
     get_all_players,
     get_event_data,
     get_game_result,
@@ -44,12 +45,14 @@ from .live_client import (
     get_team_gold_totals,
     start_live_watcher,
 )
-from .service import get_player, get_recent_matches, get_solo_rank
+from .service import get_player, get_recent_matches, get_recent_matches_with_details, get_solo_rank, get_match_detail
 
 __all__ = [
     # 함수
     "get_player",
+    "get_match_detail",
     "get_recent_matches",
+    "get_recent_matches_with_details",
     "get_solo_rank",
     "get_live_state",
     "get_current_summoner",
@@ -57,6 +60,7 @@ __all__ = [
     "start_login_watcher",
     "get_gameflow_phase",
     "get_active_player",
+    "get_active_player_name",
     "get_all_players",
     "get_event_data",
     "get_game_result",

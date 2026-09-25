@@ -67,9 +67,26 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 _PROCESS_NAMES = {"LeagueClientUx.exe", "LeagueClientUx"}
 
 
+# 찾아낸 (pid, port, password). 프로세스 목록 전체를 훑는 건 윈도우에서 비싸고,
+# 게임 단계 폴링은 몇 초마다 이걸 부르므로 살아있는 동안은 재사용한다.
+_credentials_cache: Optional[Tuple[int, int, str]] = None
+
+
+def _cached_process_alive(pid: int) -> bool:
+    """캐시해 둔 pid가 아직 같은 클라이언트 프로세스인지 싸게 확인한다."""
+    try:
+        return psutil.Process(pid).name() in _PROCESS_NAMES
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.Error):
+        return False
+
+
 def _find_lcu_credentials() -> Optional[Tuple[int, str]]:
     """실행 중인 LeagueClientUx 프로세스에서 포트/비밀번호를 찾는다."""
-    for proc in psutil.process_iter(["name", "cmdline"]):
+    global _credentials_cache
+    if _credentials_cache is not None and _cached_process_alive(_credentials_cache[0]):
+        return _credentials_cache[1], _credentials_cache[2]
+    _credentials_cache = None
+    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
         try:
             if proc.info["name"] not in _PROCESS_NAMES:
                 continue
@@ -84,6 +101,7 @@ def _find_lcu_credentials() -> Optional[Tuple[int, str]]:
             elif arg.startswith("--remoting-auth-token="):
                 password = arg.split("=", 1)[1]
         if port and password:
+            _credentials_cache = (proc.info["pid"], port, password)
             return port, password
     return None
 
@@ -367,6 +385,7 @@ def get_post_game_summary() -> Optional[PostGameSummary]:
     kill_participation = (kills + assists) / team_kills * 100 if team_kills > 0 else 0.0
 
     return PostGameSummary(
+        champion_name=my_player.get("championName") or my_player.get("skinName") or None,
         game_duration_seconds=game_duration,
         result="WIN" if my_team.get("isWinningTeam") else "LOSS",
         kills=kills,

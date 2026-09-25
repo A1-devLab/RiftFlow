@@ -53,6 +53,11 @@ class MatchSummary:
     deaths: int
     assists: int
     cs: Optional[int] = None         # creep score - 큐 타입에 따라 없을 수 있음
+    damage_to_champions: Optional[int] = None
+    gold_earned: Optional[int] = None
+    spell1_id: Optional[int] = None
+    spell2_id: Optional[int] = None
+    keystone_id: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +155,7 @@ class PostGameSummary:
     damage_dealt: int                # 챔피언 대상 딜량
     damage_taken: int
     vision_score: int
+    champion_name: Optional[str] = None   # 결과 화면에서 확인되면 채움. 못 읽으면 None
 
 
 # ---------------------------------------------------------------------------

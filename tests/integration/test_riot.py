@@ -51,7 +51,9 @@ class RiotClientTests(unittest.TestCase):
                      "participants": [{"puuid": "p1", "championName": "Ahri", "win": True,
                                        "kills": 8, "deaths": 2, "assists": 10,
                                        "totalMinionsKilled": 150,
-                                       "neutralMinionsKilled": 5}]},
+                                       "neutralMinionsKilled": 5, "totalDamageDealtToChampions": 12345,
+                                       "goldEarned": 9876, "summoner1Id": 4, "summoner2Id": 14,
+                                       "perks": {"styles": [{"selections": [{"perk": 8005}]}]}}]},
         }
         with patch.object(service, "_client") as client:
             client.get_region.side_effect = [["KR_123"], detail]
@@ -59,6 +61,9 @@ class RiotClientTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].match_id, "KR_123")
         self.assertEqual(rows[0].cs, 155)
+        self.assertEqual(rows[0].damage_to_champions, 12345)
+        self.assertEqual(rows[0].gold_earned, 9876)
+        self.assertEqual((rows[0].spell1_id, rows[0].spell2_id, rows[0].keystone_id), (4, 14, 8005))
 
 
 class LoginDetectionTests(unittest.TestCase):
