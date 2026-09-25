@@ -5,6 +5,8 @@ src/riot - 라이엇 API 연동 모듈.
 """
 
 from contracts.riot import (
+    ChampSelectMember,
+    ChampSelectSession,
     ClientNotRunning,
     ConnectionState,
     LiveMatchStatus,
@@ -12,14 +14,26 @@ from contracts.riot import (
     MatchDataUnavailable,
     MatchSummary,
     PlayerIdentity,
+    PlayerLiveStats,
     PlayerNotFound,
+    PostGameSummary,
     RankInfo,
     RateLimitExceeded,
     RiotApiError,
+    TeamGoldTotals,
 )
 
-from .lcu_client import get_current_summoner, is_client_logged_in, start_login_watcher
-from .live_client import get_live_state
+from .lcu_client import (
+    ChampSelectSocket,
+    get_champ_select_session,
+    get_current_summoner,
+    get_post_game_summary,
+    is_client_logged_in,
+    start_champ_select_watcher,
+    start_login_watcher,
+    wait_for_post_game_summary,
+)
+from .live_client import get_live_state, get_scoreboard, get_team_gold_totals
 from .service import get_player, get_recent_matches, get_solo_rank
 
 __all__ = [
@@ -31,6 +45,13 @@ __all__ = [
     "get_current_summoner",
     "is_client_logged_in",
     "start_login_watcher",
+    "get_scoreboard",
+    "get_team_gold_totals",
+    "get_post_game_summary",
+    "wait_for_post_game_summary",
+    "get_champ_select_session",
+    "start_champ_select_watcher",
+    "ChampSelectSocket",
     # 데이터 형식
     "PlayerIdentity",
     "MatchSummary",
@@ -38,6 +59,11 @@ __all__ = [
     "LiveState",
     "LiveMatchStatus",
     "ConnectionState",
+    "PlayerLiveStats",
+    "TeamGoldTotals",
+    "PostGameSummary",
+    "ChampSelectMember",
+    "ChampSelectSession",
     # 예외
     "RiotApiError",
     "PlayerNotFound",
