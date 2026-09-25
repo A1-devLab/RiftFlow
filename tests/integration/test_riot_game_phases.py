@@ -40,6 +40,20 @@ class ChampSelectTests(unittest.TestCase):
 
 
 class LcuTests(unittest.TestCase):
+    def setUp(self):
+        lcu_client._credentials_cache = None
+        self.addCleanup(setattr, lcu_client, "_credentials_cache", None)
+
+    @patch.object(lcu_client, "_cached_process_alive", return_value=True)
+    @patch.object(lcu_client.psutil, "process_iter")
+    def test_credentials_are_reused_while_client_process_lives(self, process_iter, _alive):
+        proc = Mock(info={"pid": 7, "name": "LeagueClientUx.exe",
+                          "cmdline": ["--app-port=1234", "--remoting-auth-token=secret"]})
+        process_iter.return_value = [proc]
+        self.assertEqual(lcu_client._find_lcu_credentials(), (1234, "secret"))
+        self.assertEqual(lcu_client._find_lcu_credentials(), (1234, "secret"))
+        process_iter.assert_called_once()
+
     @patch.object(lcu_client, "_find_lcu_credentials", return_value=(1234, "secret"))
     @patch.object(lcu_client, "_lcu_get", return_value="ChampSelect")
     def test_gameflow_uses_dedicated_endpoint(self, get, _credentials):
@@ -84,15 +98,21 @@ class LiveClientTests(unittest.TestCase):
         self.assertEqual(live_client.get_game_result(events), "WIN")
         self.assertIsNone(live_client.get_game_result(events[:1]))
 
+    @patch.object(in_service, "get_active_player_name", return_value="Player")
     @patch.object(in_service, "get_team_gold_totals", return_value="gold")
     @patch.object(in_service, "get_scoreboard", return_value=["board"])
     @patch.object(in_service, "get_live_state")
-    def test_in_game_service_combines_riot_data(self, state, _board, totals):
+    def test_in_game_service_combines_riot_data(self, state, _board, totals, _name):
         state.return_value.status = LiveMatchStatus.IN_GAME
         result = in_service.get_in_game_context()
         self.assertEqual(result["scoreboard"], ["board"])
         self.assertEqual(result["team_gold"], "gold")
+        self.assertEqual(result["active_player_name"], "Player")
         totals.assert_called_once_with(["board"])
+
+    @patch.object(live_client, "_get", side_effect=lambda endpoint: "Me#KR1" if endpoint == "/activeplayername" else None)
+    def test_active_player_name_reads_dedicated_endpoint(self, _get):
+        self.assertEqual(live_client.get_active_player_name(), "Me#KR1")
 
 
 class PostGameTests(unittest.TestCase):
@@ -112,7 +132,9 @@ class PostGameTests(unittest.TestCase):
             "gameLength": 1800,
             "teams": [{"isWinningTeam": True, "players": [local, ally]}],
         }
+        local["championName"] = "Ahri"
         summary = lcu_client.get_post_game_summary()
+        self.assertEqual(summary.champion_name, "Ahri")
         self.assertEqual(summary.result, "WIN")
         self.assertEqual(summary.cs, 190)
         self.assertAlmostEqual(summary.cs_per_min, 190 / 30)

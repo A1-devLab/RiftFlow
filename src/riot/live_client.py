@@ -123,6 +123,24 @@ def get_active_player() -> Optional[dict]:
     return _get("/activeplayer")
 
 
+def get_active_player_name() -> Optional[str]:
+    """본인의 소환사 이름을 반환한다 (스코어보드에서 '나'를 찾을 때 쓴다).
+
+    /playerlist 항목에는 본인 표시가 없어서, 이 이름으로 대조해야 한다.
+    클라이언트 버전에 따라 "이름" 또는 "이름#태그"로 온다.
+    게임 중이 아니면 None.
+    """
+    name = _get("/activeplayername")
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    player = get_active_player()
+    if isinstance(player, dict):
+        value = player.get("summonerName") or player.get("riotId")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def get_all_players() -> Optional[List[dict]]:
     """전체 10명의 원본 데이터를 그대로 반환한다.
 

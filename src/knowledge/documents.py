@@ -54,7 +54,7 @@ def as_document(row):
                 lines.append("가격: %s골드" % gold["total"])
         elif kind == "champion":
             fields = {"ddragon_tags": entity.get("tags", []), "resource": entity.get("partype"),
-                      "stats": entity.get("stats", {})}
+                      "info": entity.get("info", {}), "stats": entity.get("stats", {})}
             if fields['stats']:
                 lines.append('기본 능력치: ' + json.dumps(fields['stats'], ensure_ascii=False))
         elif kind == "rune":

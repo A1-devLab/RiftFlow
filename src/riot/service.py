@@ -63,28 +63,27 @@ def get_player(riot_id: str) -> PlayerIdentity:
 
 
 def get_recent_matches(puuid: str, count: int) -> List[MatchSummary]:
-    """PUUID로 최근 경기 요약 목록을 조회한다.
+    summaries, _ = get_recent_matches_with_details(puuid, count)
+    return summaries
 
-    Raises:
-        MatchDataUnavailable: 경기 기록이 없는 경우
-        RateLimitExceeded: API 호출 제한에 걸린 경우
-    """
+
+def get_recent_matches_with_details(puuid: str, count: int):
+    """Fetch each match once, returning both card summaries and full data for local analysis."""
     client = _get_client()
-
     match_ids = client.get_region(
         f"/lol/match/v5/matches/by-puuid/{puuid}/ids",
         params={"start": 0, "count": count},
     )
     if not match_ids:
         raise MatchDataUnavailable(puuid)
-
-    summaries: List[MatchSummary] = []
+    summaries, details = [], []
     for match_id in match_ids:
         detail = client.get_region(f"/lol/match/v5/matches/{match_id}")
         if detail is None:
             continue
         summaries.append(_to_match_summary(detail, puuid))
-    return summaries
+        details.append(detail)
+    return summaries, details
 
 
 def get_solo_rank(puuid: str) -> Optional[RankInfo]:
@@ -129,4 +128,20 @@ def _to_match_summary(match_detail: dict, puuid: str) -> MatchSummary:
         assists=participant["assists"],
         cs=participant.get("totalMinionsKilled", 0)
         + participant.get("neutralMinionsKilled", 0),
+        damage_to_champions=participant.get("totalDamageDealtToChampions"),
+        gold_earned=participant.get("goldEarned"),
+        spell1_id=participant.get("summoner1Id"),
+        spell2_id=participant.get("summoner2Id"),
+        keystone_id=next((selection.get("perk") for style in
+                          participant.get("perks", {}).get("styles", [])
+                          for selection in style.get("selections", [])[:1]), None),
     )
+
+
+def get_match_detail(match_id: str) -> dict:
+    """Retrieve the completed match for the statistics dialog."""
+    from urllib.parse import quote
+    detail = _get_client().get_region(f"/lol/match/v5/matches/{quote(match_id, safe='')}")
+    if not detail or not detail.get('info', {}).get('participants'):
+        raise MatchDataUnavailable(match_id)
+    return detail
