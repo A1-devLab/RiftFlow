@@ -19,6 +19,7 @@ from rag.gemini import DEFAULT_MODEL, generate
 from riot import (LiveMatchStatus, get_gameflow_phase, get_match_detail, get_current_summoner, get_live_state,
                   get_recent_matches_with_details, get_solo_rank, start_login_watcher)
 from game_phases.before_game.desktop import describe_session, answer_before_game, get_before_game_context
+from game_phases.before_game.runes import format_explanation, recommend_runes
 from game_phases.in_game.desktop import answer_in_game, describe_scoreboard, get_in_game_context
 from knowledge.before_game import champion_catalog, save_recent_matchups, personal_context, rune_catalog, named_rune_page, canonical_champion
 from knowledge.in_game import item_catalog
@@ -219,6 +220,7 @@ class Window(QMainWindow):
     def make_before_game(self):
         self.before_game = BeforeGamePage()
         self.before_game.askRequested.connect(self.ask_before_game)
+        self.before_game.runeRequested.connect(self.request_runes)
         self.before_game.refreshRequested.connect(self.poll_champ_select)
         self.before_game.personalContextChanged.connect(self.update_personal_matchup)
         self.stack.addWidget(self.before_game)
@@ -357,6 +359,31 @@ class Window(QMainWindow):
             self.show_before_game_answer,
         )
 
+    def request_runes(self, request):
+        if self.jobs:
+            return
+        if not os.environ.get('GEMINI_API_KEY'):
+            self.before_game.rune_view.show_message('룬 추천에 필요한 GEMINI_API_KEY를 .env에 설정해 주세요.')
+            return
+        model = self.model.text().strip() or DEFAULT_MODEL
+        path, personal = self.db_path, self.personal_path
+        puuid = self.riot_context['player'].puuid if self.riot_context else None
+        champion = request['champion']
+        self.before_game.rune_view.show_message('챔피언과 상대 조합, 공식 룬 설명을 바탕으로 룬을 고르고 있습니다…')
+        self.status.setText('룬 추천 중')
+        self.start_job(
+            lambda: recommend_runes(
+                path, personal, puuid, request['view'], champion=champion, opponent=request['opponent'],
+                trade_preference=request['trade_preference'], lane_aggression=request['lane_aggression'],
+                generate=lambda prompt, **options: generate(prompt, model=model, retries=0, **options)),
+            lambda result: self.show_rune_recommendation(result, champion),
+            on_error=self.before_game.rune_view.show_message)
+
+    def show_rune_recommendation(self, result, champion):
+        self.before_game.show_rune_result(result, champion)
+        self.before_game.answer.setPlainText(format_explanation(result))
+        self.status.setText('룬 추천 완료' if result['generated'] else '룬 추천 확인 필요')
+
     def show_before_game_answer(self, result):
         self.before_game.answer.setPlainText(result['answer'] or result['message'] or '답변을 받지 못했습니다.')
         self.status.setText('픽창 답변 완료' if result['generated'] else '픽창 자료 확인 필요')
@@ -429,6 +456,7 @@ class Window(QMainWindow):
         self.out_game.set_busy(True)
         self.before_game.send.setEnabled(False)
         self.before_game.refresh.setEnabled(False)
+        self.before_game.rune_button.setEnabled(False)
         self.in_game.set_busy(True)
         job.result.connect(callback)
         job.failed.connect(self.failed)
@@ -446,6 +474,7 @@ class Window(QMainWindow):
         self.out_game.set_busy(False)
         self.before_game.send.setEnabled(True)
         self.before_game.refresh.setEnabled(True)
+        self.before_game.rune_button.setEnabled(True)
         self.in_game.set_busy(False)
         if not self.jobs and self.pending_riot_player is not None:
             player = self.pending_riot_player

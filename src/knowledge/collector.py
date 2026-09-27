@@ -128,6 +128,16 @@ def store_patch(db, html, url):
     return status
 
 
+def rune_rows(data):
+    """runesReforged.json을 룬 단위 행으로 편다. 소속 트리와 슬롯(0=핵심 룬)을 함께 남긴다.
+
+    룬 추천은 '주 트리 슬롯마다 하나' 같은 페이지 규칙을 검사해야 해서 이 구조가 꼭 필요하다.
+    """
+    return [(str(rune['id']), dict(rune, tree_id=tree.get('id'), tree_key=tree.get('key'),
+                                   tree_name=tree.get('name'), tree_icon=tree.get('icon'), slot_index=index))
+            for tree in data for index, slot in enumerate(tree['slots']) for rune in slot['runes']]
+
+
 def update(db, limit=3):
     if not isinstance(limit, int) or not 1 <= limit <= 12:
         raise ValueError('패치 수는 1~12여야 합니다.')
@@ -143,7 +153,7 @@ def update(db, limit=3):
             url = f'{DDRAGON}/cdn/{version}/data/ko_KR/{filename}'
             data = json.loads(fetch(url))
             if kind == 'rune':
-                rows = [(str(r['id']), r) for tree in data for slot in tree['slots'] for r in slot['runes']]
+                rows = rune_rows(data)
             else:
                 rows = data['data'].items()
             for entity_id, entity in rows:

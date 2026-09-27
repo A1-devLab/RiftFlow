@@ -1,10 +1,8 @@
 """Post-game result view, personal baseline and evidence-grounded review."""
 import json
-import sqlite3
 import time
 
-from knowledge.before_game import canonical_champion
-from knowledge.documents import get_documents
+from knowledge.before_game import canonical_champion, champion_reference
 from rag.gemini import GeminiError
 from riot import get_post_game_summary
 
@@ -86,21 +84,6 @@ def wait_for_summary(should_stop, timeout=30.0, interval=1.0, fetch=get_post_gam
     return None
 
 
-def _champion_reference(db_path, champion):
-    if not champion:
-        return None
-    try:
-        documents = get_documents(kind='champion', db_path=db_path)
-    except (sqlite3.Error, OSError, ValueError):
-        return None
-    key = str(champion).casefold()
-    doc = next((d for d in documents if key in (str(d.get('entity_id', '')).casefold(),
-                                                 str(d.get('subject_name', '')).casefold())), None)
-    if doc is None:
-        return None
-    return {'name': doc.get('subject_name'), 'version': doc.get('version'), 'text': doc.get('text', '')[:1200]}
-
-
 def _live_snapshot(view):
     """게임 중 마지막으로 본 스코어보드 중 분석에 쓸 부분만 남긴다."""
     if not view or not view.get('in_game'):
@@ -124,7 +107,7 @@ def analyze_after_game(db_path, summary, *, generate, champion=None, matches=Non
                'game_result': describe_summary(summary, champion),
                'last_live_scoreboard': _live_snapshot(live_view),
                'personal_baseline': baseline_from_matches(matches, canonical_champion(db_path, champion)),
-               'official_champion': _champion_reference(db_path, champion)}
+               'official_champion': champion_reference(db_path, champion)}
     prompt = {'system': SYSTEM, 'user': json.dumps(payload, ensure_ascii=False)}
     try:
         reply = generate(prompt)

@@ -82,6 +82,8 @@ class MatchAssets(QObject):
             catalog = json.loads(data)
             self.perks = {rune['id']: (rune['icon'], rune['name'])
                           for style in catalog for slot in style['slots'] for rune in slot['runes']}
+            # 룬 트리(정밀, 지배 …) 아이콘도 같은 'rune' 종류로 보여 준다. 트리 ID와 룬 ID는 겹치지 않는다.
+            self.perks.update({style['id']: (style['icon'], style['name']) for style in catalog})
         except (ValueError, KeyError, TypeError):
             self.perks = {}
         for key in list(self.pending):

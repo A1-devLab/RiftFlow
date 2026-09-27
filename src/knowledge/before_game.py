@@ -77,6 +77,23 @@ def named_rune_page(page, catalog):
             for style in page]
 
 
+def champion_reference(db_path, champion, limit=1200):
+    """챔피언 이름(한국어 또는 Data Dragon ID)으로 공식 챔피언 문서를 찾아 프롬프트용으로 줄인다."""
+    from .documents import get_documents
+    if not champion:
+        return None
+    try:
+        documents = get_documents(kind='champion', db_path=db_path)
+    except (sqlite3.Error, OSError, ValueError):
+        return None
+    key = str(champion).casefold()
+    doc = next((d for d in documents if key in (str(d.get('entity_id', '')).casefold(),
+                                                 str(d.get('subject_name', '')).casefold())), None)
+    if doc is None:
+        return None
+    return {'name': doc.get('subject_name'), 'version': doc.get('version'), 'text': doc.get('text', '')[:limit]}
+
+
 def save_recent_matchups(path, puuid, details):
     """Keep compact, account-partitioned observations; repeated refreshes are idempotent."""
     account = hashlib.sha256(puuid.encode()).hexdigest()
@@ -131,3 +148,25 @@ def personal_context(path, puuid, champion, opponent=None, lane=None):
             'matchup_games': len(matches), 'matchup_wins': sum(r[2] for r in matches),
             'latest_rune_page': latest,
             'scope': '이 계정에서 조회해 저장한 협곡 경기만 포함. 전체 플레이어 상성 통계가 아님.'}
+
+
+def recent_rune_pages(path, puuid, champion, limit=5):
+    """이 챔피언으로 최근 실제로 쓴 룬 페이지와 그 판의 승패. 추천의 참고 자료일 뿐 정답이 아니다."""
+    path = Path(path)
+    if not path.exists() or not champion or not puuid:
+        return []
+    account = hashlib.sha256(puuid.encode()).hexdigest()
+    try:
+        with closing(sqlite3.connect(path)) as db:
+            rows = db.execute('''SELECT opponent, lane, won, rune_page FROM personal_matchups
+                WHERE account=? AND lower(champion)=lower(?) AND rune_page IS NOT NULL
+                ORDER BY played_at DESC LIMIT ?''', (account, champion, limit)).fetchall()
+    except sqlite3.Error:
+        return []
+    pages = []
+    for opponent, lane, won, raw in rows:
+        try:
+            pages.append({'opponent': opponent, 'lane': lane, 'won': bool(won), 'page': json.loads(raw)})
+        except (TypeError, ValueError):
+            continue
+    return pages
