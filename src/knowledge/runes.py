@@ -3,9 +3,12 @@
 LLM이 고른 룬 페이지를 클라이언트가 받아들일 수 있는지 여기서 코드로 검사한다.
 모델의 출력은 믿지 않고, 규칙에 맞는 페이지만 화면에 보여 준다.
 """
+import json
 import sqlite3
+from contextlib import closing
+from pathlib import Path
 
-from .documents import get_documents
+from .documents import get_documents, version_key
 
 # 능력치 파편은 Data Dragon에 없어 직접 적는다. 줄마다 고를 수 있는 파편이며 같은 파편이 여러 줄에 나올 수 있다.
 # 2024 시즌 변경(방어력·마법 저항력 파편 삭제, 체력·강인함 파편 추가)을 반영했다.
@@ -49,6 +52,37 @@ def rune_trees(db_path):
         for runes in tree['slots']:
             runes.sort(key=lambda rune: rune['id'])
     return trees
+
+
+def ensure_rune_trees(db_path, *, fetch=None):
+    """룬 트리 구조가 없으면 DB에 있는 룬 버전의 runesReforged.json만 받아 채운다.
+
+    트리 구조를 저장하기 전에 수집한 DB도 전체 업데이트 없이 바로 룬 추천을 쓸 수 있게 한다.
+    전체 업데이트와 같은 형식으로 저장하므로 나중에 전체 업데이트를 해도 '동일'로 처리된다.
+    받지 못하면(오프라인 등) None.
+    """
+    trees = rune_trees(db_path)
+    if trees is not None:
+        return trees
+    from .collector import DDRAGON, connect, fetch as download, rune_rows, save
+    fetch = fetch or download
+    try:
+        version = None
+        if Path(db_path).exists():
+            with closing(sqlite3.connect(db_path)) as db:
+                versions = [row[0] for row in db.execute("SELECT DISTINCT version FROM records WHERE kind='rune'")]
+            version = max(versions, key=version_key, default=None)
+        if version is None:
+            version = json.loads(fetch(f'{DDRAGON}/api/versions.json'))[0]
+        url = f'{DDRAGON}/cdn/{version}/data/ko_KR/runesReforged.json'
+        rows = rune_rows(json.loads(fetch(url)))
+        with closing(connect(db_path)) as db, db:
+            for rune_id, entity in rows:
+                save(db, 'rune', version, rune_id, entity['name'],
+                     json.dumps(entity, ensure_ascii=False, sort_keys=True), url)
+    except (OSError, ValueError, KeyError, IndexError, TypeError, sqlite3.Error):
+        return None
+    return rune_trees(db_path)
 
 
 def _slot_index(trees):

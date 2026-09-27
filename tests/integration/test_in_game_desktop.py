@@ -36,6 +36,10 @@ class InGameDesktopTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
+        # .env의 실제 Gemini 키로 자동 룬 추천이 호출되지 않게 한다. 키가 필요한 테스트는 직접 넣는다.
+        env = patch.dict(os.environ, {'GEMINI_API_KEY': ''})
+        env.start()
+        self.addCleanup(env.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.db = Path(self.temp.name) / 'game.db'

@@ -23,6 +23,7 @@ class ChampionPortraits(QObject):
 
     def attach(self, label, champion):
         key = champion.casefold()
+        label.setProperty('portraitKey', key)
         # MATCH-V5 historically uses FiddleSticks; Data Dragon uses Fiddlesticks.
         self.waiting.setdefault(key, []).append(weakref.ref(label))
         if key in self.cache:
@@ -89,5 +90,5 @@ class ChampionPortraits(QObject):
     def _display(self, key):
         for reference in self.waiting.pop(key, []):
             label = reference()
-            if label is not None and isValid(label):
+            if label is not None and isValid(label) and label.property('portraitKey') == key:
                 label.setPixmap(self.cache[key].scaled(label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))

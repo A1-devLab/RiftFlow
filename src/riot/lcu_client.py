@@ -41,6 +41,7 @@ Live Client Data API(2999)와의 차이:
 """
 
 import base64
+import dataclasses
 import json
 import ssl
 import threading
@@ -247,7 +248,17 @@ def _parse_champ_select_member(raw: dict) -> ChampSelectMember:
         champion_id=raw.get("championId", 0),
         assigned_position=raw.get("assignedPosition", ""),
         puuid=raw.get("puuid") or None,
+        champion_pick_intent=raw.get("championPickIntent") or 0,
     )
+
+
+def _parse_locked_cells(raw: dict) -> Optional[Tuple[int, ...]]:
+    """완료된 pick 행동의 actorCellId. 픽 행동 자체가 없으면(칼바람 등) None."""
+    picks = [action for group in raw.get("actions", []) for action in group if action.get("type") == "pick"]
+    if not picks:
+        return None
+    return tuple(sorted({action["actorCellId"] for action in picks
+                         if action.get("completed") and action.get("actorCellId") is not None}))
 
 
 def _parse_bans(raw: dict) -> Tuple[List[int], List[int]]:
@@ -294,6 +305,7 @@ def _parse_champ_select_session(raw: dict) -> ChampSelectSession:
         my_bans=my_bans,
         their_bans=their_bans,
         local_player_cell_id=raw.get("localPlayerCellId"),
+        locked_cell_ids=_parse_locked_cells(raw),
     )
 
 
@@ -316,7 +328,12 @@ def get_champ_select_session() -> Optional[ChampSelectSession]:
     raw = _lcu_get(port, password, "/lol-champ-select/v1/session")
     if raw is None:
         return None
-    return _parse_champ_select_session(raw)
+    session = _parse_champ_select_session(raw)
+    # 픽창 세션에는 게임 모드가 없어서 게임 진행 세션에서 따로 읽는다 (칼바람·아레나 구분용).
+    flow = _lcu_get(port, password, "/lol-gameflow/v1/session")
+    queue = ((flow or {}).get("gameData") or {}).get("queue") or {} if isinstance(flow, dict) else {}
+    return dataclasses.replace(session, game_mode=queue.get("gameMode") or None,
+                               queue_id=queue.get("id") if isinstance(queue.get("id"), int) else None)
 
 
 def get_end_of_game_stats() -> Optional[dict]:
