@@ -1,0 +1,23 @@
+# systemd 사용자 서비스. 설치 위치: ~/.config/systemd/user/riftflow-api.service
+# 로그아웃해도 계속 돌게 하려면 한 번만: sudo loginctl enable-linger server
+[Unit]
+Description=RiftFlow API server
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/riftflow
+EnvironmentFile=%h/riftflow/server.env
+Environment=PYTHONPATH=%h/riftflow/app/src
+# 외부에는 열지 않는다. Caddy가 HTTPS로 받아 여기로 넘긴다.
+ExecStart=%h/riftflow/.venv/bin/uvicorn server.app:create_app --factory --host 127.0.0.1 --port 8787
+Restart=on-failure
+RestartSec=5
+# 같은 PC의 마인크래프트 서버에 영향이 없도록 자원을 제한한다 (사용자 서비스에 cpu·memory·pids 제한이 적용됨을 확인).
+# 메모리가 512MB를 넘으면 이 서비스만 종료되고 5초 뒤 다시 시작한다. CPU는 16스레드 중 최대 2개분.
+MemoryMax=512M
+CPUQuota=200%
+TasksMax=128
+Nice=5
+
+[Install]
+WantedBy=default.target

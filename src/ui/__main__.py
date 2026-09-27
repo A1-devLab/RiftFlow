@@ -17,11 +17,11 @@ from knowledge.documents import get_documents
 from rag.config import load_env
 from rag.gemini import DEFAULT_MODEL, generate
 from riot import (LiveMatchStatus, get_gameflow_phase, get_match_detail, get_current_summoner, get_live_state,
-                  get_recent_matches_with_details, get_solo_rank, start_login_watcher)
+                  get_recent_history, get_solo_rank, start_login_watcher)
 from game_phases.before_game.desktop import describe_session, answer_before_game, get_before_game_context
 from game_phases.before_game.runes import apply_recommended_page, format_explanation, recommend_runes
 from game_phases.in_game.desktop import answer_in_game, describe_scoreboard, get_in_game_context
-from knowledge.before_game import champion_catalog, save_recent_matchups, personal_context, rune_catalog, named_rune_page, canonical_champion
+from knowledge.before_game import champion_catalog, save_observations, personal_context, rune_catalog, named_rune_page, canonical_champion
 from knowledge.in_game import item_catalog
 from .pages.out_game import OutGamePage
 from .pages.before_game import BeforeGamePage
@@ -200,7 +200,8 @@ class Window(QMainWindow):
         self.champ_timer.timeout.connect(self.poll_champ_select)
         self.champ_timer.start()
         QTimer.singleShot(800, self.poll_champ_select)
-        if os.environ.get('RIOT_API_KEY'):
+        # 배포판은 라이엇 키 없이 RiftFlow 서버를 쓰므로 둘 중 하나만 있어도 전적을 불러온다.
+        if os.environ.get('RIOT_API_KEY') or os.environ.get('RIFTFLOW_SERVER_URL'):
             self.login_watcher = start_login_watcher(self.riot_login_detected.emit)
             self.status.setText('롤 클라이언트 로그인을 자동으로 기다리고 있습니다.')
         else:
@@ -534,9 +535,10 @@ class Window(QMainWindow):
         except Exception:
             self.documents = []
             self.status.setText('DB를 읽지 못했습니다. 파일 상태를 확인하세요.')
-        self.connection.setText('Gemini 키: %s  ·  Riot 키: %s' %
-                                ('설정됨' if os.environ.get('GEMINI_API_KEY') else '미설정',
-                                 '설정됨' if os.environ.get('RIOT_API_KEY') else '미설정'))
+        riot = ('RiftFlow 서버' if os.environ.get('RIFTFLOW_SERVER_URL') else
+                'Riot 키 ' + ('설정됨' if os.environ.get('RIOT_API_KEY') else '미설정'))
+        self.connection.setText('Gemini 키: %s  ·  전적: %s' %
+                                ('설정됨' if os.environ.get('GEMINI_API_KEY') else '미설정', riot))
 
     def start_job(self, function, callback, on_error=None):
         job = Job(function, self)
@@ -598,8 +600,9 @@ class Window(QMainWindow):
 
     def riot_profile(self, player=None):
         player = player or get_current_summoner()
-        matches, details = get_recent_matches_with_details(player.puuid, 20)
-        save_recent_matchups(self.personal_path, player.puuid, details)
+        history = get_recent_history(player.puuid, 20)
+        save_observations(self.personal_path, player.puuid, history['observations'])
+        matches, details = history['summaries'], history['details']
         return {'player': player, 'rank': get_solo_rank(player.puuid),
                 'matches': matches, 'details': details}
 

@@ -50,7 +50,8 @@ from .live_client import (
     get_team_gold_totals,
     start_live_watcher,
 )
-from .service import get_player, get_recent_matches, get_recent_matches_with_details, get_solo_rank, get_match_detail
+from .service import (get_match_detail, get_player, get_recent_history, get_recent_matches,
+                      get_recent_matches_with_details, get_solo_rank, matchup_observation)
 
 __all__ = [
     # 함수
@@ -58,6 +59,8 @@ __all__ = [
     "get_match_detail",
     "get_recent_matches",
     "get_recent_matches_with_details",
+    "get_recent_history",
+    "matchup_observation",
     "get_solo_rank",
     "get_live_state",
     "get_current_summoner",
