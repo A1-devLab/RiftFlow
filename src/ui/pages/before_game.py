@@ -1,11 +1,12 @@
-"""Champion-select view with live picks, bans, playstyle, rune recommendation and coaching question."""
+"""Champion-select view with live picks, bans, rune recommendation and coaching chat."""
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QSizePolicy, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget,
 )
 
 from ui.match_assets import MatchAssets
+from ui.portraits import ChampionPortraits
 
 
 def label(text, name=None):
@@ -14,6 +15,57 @@ def label(text, name=None):
     if name:
         widget.setObjectName(name)
     return widget
+
+
+class TeamList(QWidget):
+    """아군·상대 픽 목록(초상화 + 라인 · 챔피언). 폴링마다 다시 만들지 않고 값만 바꿔 깜빡임을 막는다."""
+
+    def __init__(self, portraits, empty, parent=None):
+        super().__init__(parent)
+        self.portraits = portraits
+        box = QVBoxLayout(self)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(5)
+        self.empty = label(empty, 'teamText')
+        box.addWidget(self.empty)
+        self.rows = []
+        for _ in range(5):
+            row = QWidget()
+            line = QHBoxLayout(row)
+            line.setContentsMargins(0, 0, 0, 0)
+            line.setSpacing(8)
+            portrait = QLabel(objectName='pickPortrait')
+            portrait.setFixedSize(28, 28)
+            portrait.setAlignment(Qt.AlignCenter)
+            text = label('', 'teamText')
+            line.addWidget(portrait)
+            line.addWidget(text, 1)
+            row.hide()
+            box.addWidget(row)
+            self.rows.append({'row': row, 'portrait': portrait, 'text': text, 'champion': None})
+
+    def show_team(self, team):
+        self.empty.setVisible(not team)
+        for index, slot in enumerate(self.rows):
+            if index >= len(team):
+                slot['row'].hide()
+                continue
+            player = team[index]
+            slot['row'].show()
+            slot['text'].setText(f"{player['position']}  ·  {player['champion']}"
+                                 + ('  (선택 중)' if player.get('hovering') else ''))
+            champion = player.get('id') or (player['champion'] if player.get('selected') else None)
+            if champion != slot['champion']:
+                slot['champion'] = champion
+                slot['portrait'].clear()
+                slot['portrait'].setText('?' if champion else '')
+                slot['portrait'].setToolTip(player['champion'] if champion else '')
+                if champion:
+                    self.portraits.attach(slot['portrait'], champion)
+
+    def text(self):
+        lines = [slot['text'].text() for slot in self.rows if not slot['row'].isHidden()]
+        return '\n'.join(lines) or self.empty.text()
 
 
 class RuneSlot(QWidget):
@@ -84,7 +136,8 @@ class RunePageView(QFrame):
         box = QVBoxLayout(self)
         box.setContentsMargins(14, 10, 14, 10)
         self.stack = QStackedWidget()
-        self.placeholder = label('챔피언을 정한 뒤 룬 추천을 누르면 이 픽창에 맞는 룬 페이지를 보여 줍니다.', 'subtle')
+        self.placeholder = label('픽창에서 챔피언을 올려놓으면 룬을 자동으로 추천하고 클라이언트에 적용합니다. '
+                                 '챔피언을 직접 입력했다면 룬 추천을 누르세요.', 'subtle')
         self.stack.addWidget(self.placeholder)
         page = QWidget()
         row = QHBoxLayout(page)
@@ -136,6 +189,8 @@ class BeforeGamePage(QWidget):
         self.rune_champion = None
         self.rune_page = None
         self.busy = False
+        self.user_requests = []   # 이번 픽창에서 사용자가 채팅으로 한 말. 성향은 여기서 읽는다.
+        self.portraits = ChampionPortraits(self)
         root = QVBoxLayout(self)
         root.setSpacing(13)
         header = QHBoxLayout()
@@ -149,8 +204,8 @@ class BeforeGamePage(QWidget):
         root.addWidget(self.state)
         teams = QGridLayout()
         teams.setSpacing(12)
-        self.ally = label('아군 선택 전', 'teamText')
-        self.enemy = label('상대 선택 전', 'teamText')
+        self.ally = TeamList(self.portraits, '아군 선택 전')
+        self.enemy = TeamList(self.portraits, '상대 선택 전')
         self.bans = label('확정된 밴 없음', 'teamText')
         for col, (title, body) in enumerate((('아군 픽', self.ally), ('상대 픽', self.enemy), ('확정된 밴', self.bans))):
             card = QFrame(objectName='panel')
@@ -159,20 +214,15 @@ class BeforeGamePage(QWidget):
             box.addWidget(body)
             box.addStretch()
             teams.addWidget(card, 0, col)
+            teams.setColumnStretch(col, 1)
         root.addLayout(teams)
         context = QHBoxLayout()
         self.champion = QLineEdit()
         self.champion.setPlaceholderText('내 챔피언 (픽창에서 자동 입력)')
         self.opponent = QLineEdit()
         self.opponent.setPlaceholderText('맞라인 상대 (확정 시 자동 입력)')
-        context.addWidget(self.champion, 2)
-        context.addWidget(self.opponent, 2)
-        self.trade = QComboBox()
-        self.trade.addItems(['딜교환 성향 선택', '순간 교전', '지속 교전'])
-        self.aggression = QComboBox()
-        self.aggression.addItems(['라인전 성향 선택', '공격적', '안정적'])
-        context.addWidget(self.trade, 1)
-        context.addWidget(self.aggression, 1)
+        context.addWidget(self.champion, 1)
+        context.addWidget(self.opponent, 1)
         root.addLayout(context)
         self.champion.editingFinished.connect(self.personalContextChanged.emit)
         self.opponent.editingFinished.connect(self.personalContextChanged.emit)
@@ -205,7 +255,7 @@ class BeforeGamePage(QWidget):
         form = QHBoxLayout()
         self.question = QLineEdit()
         self.question.setMaxLength(1000)
-        self.question.setPlaceholderText('예: 이 상대를 만났을 때 초반 운영은?')
+        self.question.setPlaceholderText('예: 이 상대 초반 운영은? / 공격적으로 하고 싶어, 룬 다시 짜줘')
         self.question.returnPressed.connect(self.submit)
         self.send = QPushButton('질문')
         self.send.setObjectName('primary')
@@ -216,14 +266,14 @@ class BeforeGamePage(QWidget):
 
     def show_session(self, view):
         self.view = view
-        self.state.setText('픽창 연결됨 · 확정된 선택만 표시합니다.')
-        def line(team):
-            return '\n'.join(f"{p['position']}  ·  {p['champion']}" for p in team) or '선택 전'
-        self.ally.setText(line(view['allies']))
-        self.enemy.setText(line(view['enemies']))
+        mode = ' · %s' % view['mode_name'] if view.get('mode_name') else ''
+        self.state.setText('픽창 연결됨%s · 상대는 확정된 픽만 보입니다.' % mode)
+        self.ally.show_team(view['allies'])
+        self.enemy.show_team(view['enemies'])
         self.bans.setText('아군: ' + (', '.join(view['ally_bans']) or '없음') + '\n상대: ' + (', '.join(view['enemy_bans']) or '없음'))
         mine = view.get('mine') or {}
-        if mine.get('locked'):
+        # 확정 전에 올려놓은 챔피언도 내 챔피언으로 채운다 (룬 추천을 미리 받을 수 있게).
+        if mine.get('selected', mine.get('locked')):
             self.auto_champion = mine['champion']
             self.champion.setText(self.auto_champion)
         elif self.champion.text() == self.auto_champion:
@@ -241,8 +291,8 @@ class BeforeGamePage(QWidget):
     def show_disconnected(self):
         self.state.setText('픽창을 기다리고 있습니다. 롤 클라이언트에서 챔피언 선택을 시작하세요.')
         self.view = {'mine': None, 'allies': [], 'enemies': [], 'ally_bans': [], 'enemy_bans': []}
-        self.ally.setText('아군 선택 전')
-        self.enemy.setText('상대 선택 전')
+        self.ally.show_team([])
+        self.enemy.show_team([])
         self.bans.setText('확정된 밴 없음')
         if self.champion.text() == self.auto_champion:
             self.champion.clear()
@@ -255,14 +305,25 @@ class BeforeGamePage(QWidget):
         return {'view': self.view, 'question': question,
                 'champion': self.champion.text().strip(),
                 'opponent': self.opponent.text().strip(),
-                'trade_preference': self.trade.currentText() if self.trade.currentIndex() else None,
-                'lane_aggression': self.aggression.currentText() if self.aggression.currentIndex() else None}
+                'user_requests': list(self.user_requests[-5:])}
+
+    def reset_conversation(self):
+        self.user_requests = []
 
     def submit(self):
+        """채팅 한 줄. 룬 이야기면 그 말을 반영해 룬을 새로 추천하고, 아니면 코치가 답한다.
+
+        어느 쪽이든 말한 내용은 기억해 두고 이후 추천·답변에 성향으로 반영한다.
+        """
         question = self.question.text().strip()
-        if not question:
+        if not question or self.busy:
             return
-        self.askRequested.emit(self._request(question))
+        self.user_requests.append(question)
+        self.question.clear()
+        if '룬' in question and self.champion.text().strip():
+            self.runeRequested.emit(self._request(question))
+        else:
+            self.askRequested.emit(self._request(question))
 
     def request_runes(self):
         if not self.champion.text().strip():
@@ -284,9 +345,19 @@ class BeforeGamePage(QWidget):
         if self.rune_page is not None and not self.busy:
             self.runeApplyRequested.emit({'page': self.rune_page, 'champion': self.rune_champion})
 
-    def show_apply_status(self, text):
+    def show_apply_status(self, text, ok=None):
+        """적용 결과 한 줄. 실패(ok=False)면 주황색으로 보이고 적용 버튼을 강조해 누르도록 유도한다."""
         self.rune_status.setText(text)
         self.rune_status.setVisible(bool(text))
+        self._restyle(self.rune_status, {True: 'applyOk', False: 'applyWarn'}.get(ok, 'subtle'))
+        self._restyle(self.apply_button, 'attention' if ok is False else '')
+
+    @staticmethod
+    def _restyle(widget, name):
+        if widget.objectName() != name:
+            widget.setObjectName(name)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
 
     def set_busy(self, busy):
         self.busy = busy
@@ -301,7 +372,7 @@ class BeforeGamePage(QWidget):
         if self.rune_champion and text.strip() != self.rune_champion:
             self.rune_champion, self.rune_page = None, None
             self.show_apply_status('')
-            self.rune_view.show_message('챔피언이 바뀌었습니다. 룬 추천을 다시 눌러 주세요.')
+            self.rune_view.show_message('챔피언이 바뀌었습니다. 픽창에서는 잠시 뒤 자동으로 다시 추천하고, 바로 받으려면 룬 추천을 누르세요.')
             self._sync_buttons()
 
 
@@ -309,7 +380,7 @@ STYLE = """
 QWidget#beforeGame { background: #101722; color: #e8edf4; }
 QLabel#title { color: #edf4ff; font-size: 27px; font-weight: 700; }
 QLabel#subtle { color: #94a8c2; }
-QFrame#panel QLabel { background: transparent; }
+QFrame#panel QLabel, QFrame#panel QWidget { background: transparent; }
 QFrame#panel { background: #182536; border: 1px solid #31445e; border-radius: 12px; min-height: 128px; }
 QLabel#cardTitle { color: #7dc9e9; font-size: 16px; font-weight: 700; }
 QLabel#teamText { color: #dce9f7; font-size: 14px; }
@@ -323,5 +394,9 @@ QFrame#runePanel QLabel, QFrame#runePanel QWidget { background: transparent; }
 QLabel#runeIcon { background: #0e1724; border: 1px solid #2e3f56; }
 QLabel#runeName { color: #c0cee3; font-size: 11px; }
 QLabel#runeTree { color: #7dc9e9; font-size: 13px; font-weight: 700; }
+QLabel#pickPortrait { background: #0e1724; color: #6f829c; border: 1px solid #2e3f56; border-radius: 6px; font-size: 11px; }
+QLabel#applyOk { color: #72e2c7; }
+QLabel#applyWarn { color: #ffb86b; font-weight: 700; }
+QPushButton#attention { background: #f0a14a; color: #2b1a05; border: none; font-weight: 700; }
 QLabel#shardChip { background: #0e1724; color: #dce9f7; border: 1px solid #2e3f56; border-radius: 6px; padding: 4px 8px; font-size: 12px; }
 """

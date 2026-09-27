@@ -18,7 +18,7 @@ docs/interfaces.md의 riot 모듈 계약(get_player, get_recent_matches, get_liv
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +171,7 @@ class ChampSelectMember:
     champion_id: int                    # 0 = 아직 픽 안 함
     assigned_position: str              # 예: "top"/"jungle"/"middle"/"bottom"/"utility", 없으면 ""
     puuid: Optional[str] = None         # 상대팀은 픽 완료 전까지 비어있을 수 있음
+    champion_pick_intent: int = 0       # 확정 전에 올려놓은 챔피언. 아군·본인만 보이고 상대는 항상 0
 
 
 @dataclass(frozen=True)
@@ -187,6 +188,11 @@ class ChampSelectSession:
     my_bans: List[int]                  # championId 목록 - actions의 완료된 ban에서 집계 (raw bans 필드는 안 믿음)
     their_bans: List[int]
     local_player_cell_id: int           # my_team 중 본인 슬롯의 cell_id
+    # 픽을 확정한 cell_id들. 내 차례에 챔피언을 올려놓기만 해도 champion_id가 채워지므로 이것으로 확정을 구분한다.
+    # 픽 행동이 없는 모드(칼바람 등)나 알 수 없으면 None - 이때는 champion_id가 있으면 확정으로 본다.
+    locked_cell_ids: Optional[Tuple[int, ...]] = None
+    game_mode: Optional[str] = None     # 예: "CLASSIC"(협곡), "ARAM"(칼바람), "CHERRY"(아레나). 모르면 None
+    queue_id: Optional[int] = None      # 예: 420(솔로 랭크), 450(칼바람)
 
 
 # ---------------------------------------------------------------------------

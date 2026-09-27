@@ -79,6 +79,7 @@ def open_link(url):
 
 
 HOME, PICK, INGAME, CHAT, SETTINGS = range(5)
+RETRY_HINT = " 문제를 해결한 뒤 '클라이언트에 적용'을 누르면 다시 적용합니다."
 # 픽창이 끝나고 게임 화면이 뜨기 전(로딩 화면)에는 Live Client가 아직 열려 있지 않다.
 # 이때 대기로 보면 전적 화면으로 튕겼다가 다시 인게임으로 넘어가므로 로딩으로 따로 구분한다.
 LOADING_FLOWS = ('GameStart', 'InProgress', 'Reconnect')
@@ -139,6 +140,11 @@ class Window(QMainWindow):
         self.poll_job = None
         self.champ_session_active = False
         self.phase = 'idle'
+        self.rune_cache = {}          # 같은 챔피언·상대·성향이면 다시 부르지 않는다 (Gemini 하루 호출 한도)
+        self.rune_candidate = None    # 직전 폴링에서 본 조건. 두 번 연속 같으면 자동 추천
+        self.rune_shown_key = None    # 지금 화면에 보이거나 요청 중인 추천의 조건
+        self.rune_applied_page = None  # 마지막으로 클라이언트에 적용한 추천 페이지 (같은 페이지를 반복 적용하지 않음)
+        self.pending_rune_apply = None  # 추천 작업이 끝나면 자동 적용할 페이지
         self.closing = False
         self.setWindowTitle('RiftFlow · Desktop MVP')
         self.resize(1580, 880)
@@ -249,6 +255,14 @@ class Window(QMainWindow):
             return
         phase, previous = payload['phase'], self.phase
         self.phase = phase
+        if phase == 'champ_select' and previous != 'champ_select':
+            # 새 픽창: 채팅으로 말한 성향과 적용 기록을 새로 시작한다.
+            self.before_game.reset_conversation()
+            self.rune_applied_page = None
+        if phase == 'champ_select' and previous != 'champ_select':
+            # 새 픽창: 채팅으로 말한 성향과 적용 기록을 새로 시작한다.
+            self.before_game.reset_conversation()
+            self.rune_applied_page = None
         if phase == 'champ_select':
             self.on_champ_select((payload['session'], payload['catalog']))
         else:
@@ -314,6 +328,36 @@ class Window(QMainWindow):
         self.before_game.show_session(view)
         self.champ_session_active = True
         self.update_personal_matchup()
+        self.maybe_auto_recommend()
+
+    @staticmethod
+    def rune_key(request):
+        # 채팅 내용은 조건에 넣지 않는다. 룬 이야기를 하면 채팅이 직접 새 추천을 요청한다.
+        return (request['champion'], request['opponent'], (request.get('view') or {}).get('game_mode'))
+
+    def maybe_auto_recommend(self):
+        """op.gg처럼 픽창에서 내 챔피언(올려놓기 포함)이 잠깐 그대로면 룬을 자동으로 추천한다.
+
+        챔피언을 이리저리 올려 보는 동안 호출하지 않도록 두 번의 폴링(약 2.5초) 동안 같아야 부른다.
+        같은 조건의 추천은 캐시로 바로 보여 주고, 자동 요청은 조건마다 한 번만 한다(실패해도 반복하지 않음).
+        """
+        if not os.environ.get('GEMINI_API_KEY'):
+            return
+        request = self.before_game._request()
+        if not request['champion']:
+            self.rune_candidate = None
+            return
+        key = self.rune_key(request)
+        if key == self.rune_shown_key:
+            return
+        if key != self.rune_candidate:
+            self.rune_candidate = key
+            return
+        if key in self.rune_cache:
+            self.rune_shown_key = key
+            self.show_rune_recommendation(self.rune_cache[key], request['champion'], key)
+            return
+        self.request_runes(request)
 
     def update_personal_matchup(self):
         if not self.riot_context:
@@ -356,47 +400,80 @@ class Window(QMainWindow):
                 self.db_path, self.personal_path, puuid, request['view'], request['question'],
                 generate=lambda prompt: generate(prompt, model=model, retries=0),
                 champion=request['champion'], opponent=request['opponent'],
-                trade_preference=request['trade_preference'], lane_aggression=request['lane_aggression']),
+                user_requests=request['user_requests']),
             self.show_before_game_answer,
         )
 
     def request_runes(self, request):
+        """룬 추천을 요청한다. 버튼은 항상 새로 받고, 자동 추천은 maybe_auto_recommend가 캐시를 먼저 본다."""
         if self.jobs:
-            return
+            return False
         if not os.environ.get('GEMINI_API_KEY'):
             self.before_game.rune_view.show_message('룬 추천에 필요한 GEMINI_API_KEY를 .env에 설정해 주세요.')
-            return
+            return False
         model = self.model.text().strip() or DEFAULT_MODEL
         path, personal = self.db_path, self.personal_path
+        # 룬 트리 구조가 없을 때 내려받아 채우는 건 수집한 자료 DB에서만 한다. 예시 자료는 건드리지 않는다.
+        download = path == self.live_path
         puuid = self.riot_context['player'].puuid if self.riot_context else None
-        champion = request['champion']
+        champion, key = request['champion'], self.rune_key(request)
+        self.rune_shown_key = key
         self.before_game.rune_view.show_message('챔피언과 상대 조합, 공식 룬 설명을 바탕으로 룬을 고르고 있습니다…')
         self.status.setText('룬 추천 중')
         self.start_job(
             lambda: recommend_runes(
                 path, personal, puuid, request['view'], champion=champion, opponent=request['opponent'],
-                trade_preference=request['trade_preference'], lane_aggression=request['lane_aggression'],
+                user_requests=request['user_requests'], download=download,
                 generate=lambda prompt, **options: generate(prompt, model=model, retries=0, **options)),
-            lambda result: self.show_rune_recommendation(result, champion),
+            lambda result: self.show_rune_recommendation(result, champion, key),
             on_error=self.before_game.rune_view.show_message)
+        return True
 
     def apply_runes(self, request):
+        """룬 페이지를 클라이언트에 적용한다. 버튼(수동)과 추천 직후(자동) 모두 여기로 온다."""
         if self.jobs:
             return
         page, champion = request['page'], request['champion']
+        request = dict(request, key=request.get('key') or self.rune_shown_key)
         self.before_game.show_apply_status('롤 클라이언트에 룬 페이지를 적용하고 있습니다…')
         self.status.setText('룬 페이지 적용 중')
-        self.start_job(lambda: apply_recommended_page(page, champion), self.show_rune_applied,
-                       on_error=self.before_game.show_apply_status)
+        self.start_job(lambda: apply_recommended_page(page, champion),
+                       lambda result: self.show_rune_applied(result, request),
+                       on_error=lambda message: self.before_game.show_apply_status(message + RETRY_HINT, ok=False))
 
-    def show_rune_applied(self, result):
-        self.before_game.show_apply_status(result['message'])
+    def show_rune_applied(self, result, request=None):
+        request = request or {}
+        if result['applied']:
+            self.rune_applied_page = request.get('page')
+            self.before_game.show_apply_status(result['message'], ok=True)
+        else:
+            prefix = '자동 적용하지 못했습니다. ' if request.get('auto') else ''
+            self.before_game.show_apply_status(prefix + result['message'] + RETRY_HINT, ok=False)
         self.status.setText('룬 페이지 적용 완료' if result['applied'] else '룬 페이지 적용 실패')
 
-    def show_rune_recommendation(self, result, champion):
+    def show_rune_recommendation(self, result, champion, key=None):
+        if result.get('page') and key is not None:
+            self.rune_cache[key] = result
         self.before_game.show_rune_result(result, champion)
         self.before_game.answer.setPlainText(format_explanation(result))
         self.status.setText('룬 추천 완료' if result['generated'] else '룬 추천 확인 필요')
+        # 픽창에서는 추천을 바로 클라이언트에 적용한다. 이미 적용한 조건이면 다시 쓰지 않는다.
+        if (result.get('page') and key is not None and self.phase == 'champ_select'
+                and result['page'] is not self.rune_applied_page):
+            self.pending_rune_apply = {'page': result['page'], 'champion': champion, 'key': key, 'auto': True}
+            self.before_game.show_apply_status('추천 룬을 클라이언트에 자동으로 적용합니다…')
+            if not self.jobs:
+                self.run_pending_rune_apply()
+
+    def run_pending_rune_apply(self):
+        request, self.pending_rune_apply = self.pending_rune_apply, None
+        if request is None:
+            return
+        # 기다리는 사이 챔피언이 바뀌었거나(추천 무효) 픽창이 끝났으면 적용하지 않는다.
+        if self.phase != 'champ_select' or self.before_game.rune_page is not request['page']:
+            self.before_game.show_apply_status('')
+            return
+        self.apply_runes(request)
 
     def show_before_game_answer(self, result):
         self.before_game.answer.setPlainText(result['answer'] or result['message'] or '답변을 받지 못했습니다.')
@@ -486,7 +563,10 @@ class Window(QMainWindow):
         self.out_game.set_busy(False)
         self.before_game.set_busy(False)
         self.in_game.set_busy(False)
-        if not self.jobs and self.pending_riot_player is not None:
+        if not self.jobs and self.pending_rune_apply is not None:
+            # 픽창 시간 안에 끝나야 하므로 전적 새로고침보다 먼저 한다.
+            QTimer.singleShot(0, self.run_pending_rune_apply)
+        elif not self.jobs and self.pending_riot_player is not None:
             player = self.pending_riot_player
             self.pending_riot_player = None
             QTimer.singleShot(0, lambda: self.load_riot_profile(player))

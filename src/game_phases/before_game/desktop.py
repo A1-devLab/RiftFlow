@@ -12,18 +12,35 @@ from rag.retrieve import search
 from riot import get_champ_select_session
 
 
+# LCU gameMode 코드 → 화면 이름. 모르는 코드는 코드 그대로 보여 준다.
+MODE_NAMES = {'CLASSIC': '소환사의 협곡', 'ARAM': '칼바람 나락', 'URF': 'U.R.F.', 'CHERRY': '아레나',
+              'ONEFORALL': '단일 챔피언', 'NEXUSBLITZ': '넥서스 돌격', 'ULTBOOK': '궁극기 주문서',
+              'PRACTICETOOL': '연습 모드', 'TUTORIAL': '튜토리얼'}
+
+
 def get_before_game_context():
     return get_champ_select_session()
 
 
 def describe_session(session, catalog):
+    """픽창을 화면용으로 정리한다.
+
+    selected: 확정했거나 올려놓은 챔피언이 있음. locked: 확정함. hovering: 올려놓기만 함.
+    상대의 올려놓기는 라이엇이 보여 주지 않으므로 상대는 확정한 챔피언만 나온다.
+    """
+    locked_cells = getattr(session, 'locked_cell_ids', None)
+
     def entry(member):
-        champion = catalog.get(member.champion_id, {})
-        return {'champion': champion.get('name') or ('선택 전' if not member.champion_id else f'확인 안 된 ID {member.champion_id}'),
+        shown = member.champion_id or getattr(member, 'champion_pick_intent', 0)
+        locked = bool(member.champion_id) and (locked_cells is None or member.cell_id in locked_cells)
+        champion = catalog.get(shown, {})
+        return {'champion': champion.get('name') or ('선택 전' if not shown else f'확인 안 된 ID {shown}'),
                 'id': champion.get('id'), 'position': member.assigned_position or '미정',
-                'locked': bool(member.champion_id)}
+                'locked': locked, 'selected': bool(shown), 'hovering': bool(shown) and not locked}
     mine = next((m for m in session.my_team if m.cell_id == session.local_player_cell_id), None)
-    return {'mine': entry(mine) if mine else None,
+    game_mode = getattr(session, 'game_mode', None)
+    return {'game_mode': game_mode, 'mode_name': MODE_NAMES.get(game_mode, game_mode) if game_mode else None,
+            'mine': entry(mine) if mine else None,
             'allies': [entry(m) for m in session.my_team],
             'enemies': [entry(m) for m in session.their_team],
             'ally_bans': [catalog.get(i, {}).get('name', str(i)) for i in session.my_bans],
@@ -40,7 +57,7 @@ def opponent_for_lane(view):
 
 
 def answer_before_game(db_path, personal_db_path, puuid, view, question, *, generate,
-                       champion=None, opponent=None, trade_preference=None, lane_aggression=None):
+                       champion=None, opponent=None, user_requests=None):
     """Ground verified game facts in DB and personal observations; never invent matchup rates."""
     champion = (champion or (view.get('mine') or {}).get('champion') or '').strip()
     opponent = (opponent or opponent_for_lane(view) or '').strip()
@@ -72,7 +89,8 @@ def answer_before_game(db_path, personal_db_path, puuid, view, question, *, gene
                   for row in evidence[:7]]
     from .prompt import SYSTEM
     payload = {'question': question, 'champion': champion, 'opponent': opponent or None,
-               'playstyle': {'trade_preference': trade_preference, 'lane_aggression': lane_aggression},
+               # 성향은 선택 칸 대신 사용자가 채팅으로 말한 내용에서 읽는다.
+               'earlier_messages': [m for m in (user_requests or []) if m != question][-5:],
                'champion_select': view, 'personal_observations': observations,
                'official_references': references}
     prompt = {'system': SYSTEM, 'user': json.dumps(payload, ensure_ascii=False)}

@@ -2,12 +2,26 @@
 import json
 import weakref
 
-from PySide6.QtCore import QObject, Qt, QUrl
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QObject, QRectF, Qt, QUrl
+from PySide6.QtGui import QPainter, QPainterPath, QPixmap
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from shiboken6 import isValid
 
 from .portraits import BASE
+
+
+def rounded(pixmap, radius):
+    """모서리를 둥글게 자른 그림. QLabel의 border-radius는 그림을 자르지 않아서 직접 자른다."""
+    result = QPixmap(pixmap.size())
+    result.fill(Qt.transparent)
+    painter = QPainter(result)
+    painter.setRenderHint(QPainter.Antialiasing)
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(result.rect()), radius, radius)
+    painter.setClipPath(path)
+    painter.drawPixmap(0, 0, pixmap)
+    painter.end()
+    return result
 
 
 class MatchAssets(QObject):
@@ -29,6 +43,7 @@ class MatchAssets(QObject):
             label.setToolTip('정보 없음')
             return
         key = (kind, int(asset_id))
+        label.setProperty('assetKey', '%s:%d' % key)
         self.pending.setdefault(key, []).append(weakref.ref(label))
         if key in self.cache:
             self._display(key)
@@ -56,6 +71,9 @@ class MatchAssets(QObject):
                 return
             self.version = version
             self._catalogs()
+            for key in list(self.pending):
+                if key[0] == 'profile':
+                    self._icon(key)
         except (ValueError, IndexError, TypeError):
             self.version_requested = False
 
@@ -102,6 +120,13 @@ class MatchAssets(QObject):
 
     def _icon(self, key):
         kind, asset_id = key
+        if kind == 'profile':
+            # 소환사 아이콘은 목록 없이 버전과 ID만으로 주소가 정해진다.
+            if self.version and key not in self.inflight:
+                self.inflight.add(key)
+                self._get(f'{BASE}/cdn/{self.version}/img/profileicon/{asset_id}.png',
+                          lambda data: self._loaded(key, '소환사 아이콘', data))
+            return
         catalog = {'spell': self.spells, 'rune': self.perks, 'item': self.items}.get(kind)
         if catalog is None or key in self.inflight or asset_id not in catalog:
             return
@@ -129,8 +154,11 @@ class MatchAssets(QObject):
         pixmap, name = self.cache[key]
         for reference in self.pending.pop(key, []):
             label = reference()
-            if label is not None and isValid(label):
-                label.setPixmap(pixmap.scaled(label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            if label is not None and isValid(label) and label.property('assetKey') == '%s:%d' % key:
+                scaled = pixmap.scaled(label.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                radius = label.property('roundedRadius')
+                label.setPixmap(rounded(scaled, radius) if radius else
+                                pixmap.scaled(label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
                 label.setToolTip(name)
                 label.setAccessibleName(name)
 

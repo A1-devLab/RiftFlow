@@ -5,14 +5,14 @@ import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from PySide6.QtWidgets import QApplication
 
 from game_phases.before_game.runes import JSON_CONFIG, format_explanation, parse_reply, recommend_runes
 from knowledge.before_game import save_recent_matchups
 from knowledge.collector import connect, rune_rows, save
-from knowledge.runes import describe_page, rune_trees, validate_page
+from knowledge.runes import describe_page, ensure_rune_trees, rune_trees, validate_page
 from rag.gemini import GeminiError
 from ui.pages.before_game import BeforeGamePage
 
@@ -75,6 +75,35 @@ class RuneRecommendationTests(unittest.TestCase):
             save(db, 'rune', '16.18.1', '8112', '감전', json.dumps({'id': 8112, 'name': '감전'}), 'https://example.com')
         self.assertIsNone(rune_trees(old))
 
+    def test_missing_structure_is_downloaded_for_the_stored_version(self):
+        old = Path(self.temp.name) / 'old.db'
+        with closing(connect(old)) as db, db:
+            save(db, 'rune', '16.18.1', '8112', '감전', json.dumps({'id': 8112, 'name': '감전'}), 'https://example.com')
+        fetch = Mock(return_value=json.dumps(TREES, ensure_ascii=False))
+        trees = ensure_rune_trees(old, fetch=fetch)
+        self.assertEqual(sorted(trees), [8000, 8100])
+        self.assertIn('/cdn/16.18.1/data/ko_KR/runesReforged.json', fetch.call_args.args[0])
+        again = Mock()
+        self.assertIsNotNone(ensure_rune_trees(old, fetch=again))
+        again.assert_not_called()
+        offline = Path(self.temp.name) / 'offline.db'
+        self.assertIsNone(ensure_rune_trees(offline, fetch=Mock(side_effect=OSError('offline'))))
+
+    def test_recommend_downloads_structure_only_when_allowed(self):
+        old = Path(self.temp.name) / 'old.db'
+        with closing(connect(old)) as db, db:
+            save(db, 'rune', '16.19.1', '8112', '감전', json.dumps({'id': 8112, 'name': '감전'}), 'https://example.com')
+        generate = Mock(return_value=reply(VALID))
+        with patch('knowledge.collector.fetch', side_effect=OSError('offline')):
+            failed = recommend_runes(old, self.personal, None, VIEW, generate=generate, download=True)
+        self.assertIn('내려받지 못했습니다', failed['message'])
+        with patch('knowledge.collector.fetch', return_value=json.dumps(TREES, ensure_ascii=False)) as fetch:
+            demo = recommend_runes(old, self.personal, None, VIEW, generate=generate)
+            fetch.assert_not_called()
+            result = recommend_runes(old, self.personal, None, VIEW, generate=generate, download=True)
+        self.assertIn('예시 자료에는', demo['message'])
+        self.assertTrue(result['generated'])
+
     def test_valid_page_is_ordered_for_the_client(self):
         page, errors = validate_page(VALID, self.trees)
         self.assertEqual(errors, [])
@@ -109,7 +138,8 @@ class RuneRecommendationTests(unittest.TestCase):
                  'perks': {'styles': [{'style': 8000, 'selections': [{'perk': 8010}]}]}},
                 {'puuid': 'x', 'teamId': 200, 'teamPosition': 'MIDDLE', 'championName': 'Lux'}]}}])
         generate = Mock(side_effect=[reply(dict(VALID, keystone=8010)), reply(VALID)])
-        result = recommend_runes(self.db, self.personal, 'mine', VIEW, generate=generate, lane_aggression='공격적')
+        result = recommend_runes(self.db, self.personal, 'mine', VIEW, generate=generate,
+                                 user_requests=['초반 운영 알려줘', '공격적으로 하고 싶어'])
         self.assertTrue(result['generated'])
         self.assertEqual(result['attempts'], 2)
         self.assertEqual(generate.call_count, 2)
@@ -123,7 +153,7 @@ class RuneRecommendationTests(unittest.TestCase):
         self.assertEqual(first['my_recent_pages'], [{'won': False, 'opponent': 'Lux',
                                                      'page': [{'tree': '정밀', 'runes': ['정복자']}]}])
         self.assertEqual(len(first['rune_catalog']), 2)
-        self.assertEqual(first['playstyle']['lane_aggression'], '공격적')
+        self.assertEqual(first['user_requests'], ['초반 운영 알려줘', '공격적으로 하고 싶어'])
         self.assertEqual(result['page']['primary'][0]['name'], '비열한 한 방')
         self.assertEqual(result['reasons'], [{'rune': '감전', 'reason': '감전은 짧은 연계에 추가 피해를 줍니다.'}])
         text = format_explanation(result)
@@ -140,7 +170,7 @@ class RuneRecommendationTests(unittest.TestCase):
     def test_missing_structure_or_champion_does_not_call_model(self):
         generate = Mock()
         missing = recommend_runes(Path(self.temp.name) / 'none.db', self.personal, None, VIEW, generate=generate)
-        self.assertIn('다시 실행', missing['message'])
+        self.assertIn('예시 자료에는', missing['message'])
         empty = recommend_runes(self.db, self.personal, None, {'mine': None}, generate=generate)
         self.assertIn('챔피언', empty['message'])
         generate.assert_not_called()
