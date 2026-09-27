@@ -5,6 +5,7 @@ src/riot - 라이엇 API 연동 모듈.
 """
 
 from contracts.riot import (
+    AppliedRunePage,
     ChampSelectMember,
     ChampSelectSession,
     ClientNotRunning,
@@ -20,15 +21,19 @@ from contracts.riot import (
     RankInfo,
     RateLimitExceeded,
     RiotApiError,
+    RunePageSlotsFull,
     TeamGoldTotals,
 )
 
 from .lcu_client import (
+    RIFTFLOW_PAGE_PREFIX,
     ChampSelectSocket,
+    apply_rune_page,
     get_champ_select_session,
     get_current_summoner,
     get_gameflow_phase,
     get_post_game_summary,
+    get_rune_pages,
     is_client_logged_in,
     start_champ_select_watcher,
     start_login_watcher,
@@ -72,6 +77,9 @@ __all__ = [
     "get_champ_select_session",
     "start_champ_select_watcher",
     "ChampSelectSocket",
+    "get_rune_pages",
+    "apply_rune_page",
+    "RIFTFLOW_PAGE_PREFIX",
     # 데이터 형식
     "PlayerIdentity",
     "MatchSummary",
@@ -84,10 +92,12 @@ __all__ = [
     "PostGameSummary",
     "ChampSelectMember",
     "ChampSelectSession",
+    "AppliedRunePage",
     # 예외
     "RiotApiError",
     "PlayerNotFound",
     "MatchDataUnavailable",
     "RateLimitExceeded",
     "ClientNotRunning",
+    "RunePageSlotsFull",
 ]

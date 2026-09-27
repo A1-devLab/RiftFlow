@@ -121,6 +121,7 @@ class RunePageView(QFrame):
 class BeforeGamePage(QWidget):
     askRequested = Signal(object)
     runeRequested = Signal(object)
+    runeApplyRequested = Signal(object)
     refreshRequested = Signal()
     personalContextChanged = Signal()
 
@@ -133,6 +134,8 @@ class BeforeGamePage(QWidget):
         self.view = {'mine': None, 'allies': [], 'enemies': [], 'ally_bans': [], 'enemy_bans': []}
         self.assets = MatchAssets(self)
         self.rune_champion = None
+        self.rune_page = None
+        self.busy = False
         root = QVBoxLayout(self)
         root.setSpacing(13)
         header = QHBoxLayout()
@@ -180,6 +183,11 @@ class BeforeGamePage(QWidget):
         rune_head = QHBoxLayout()
         rune_head.addWidget(label('추천 룬', 'cardTitle'))
         rune_head.addStretch()
+        self.apply_button = QPushButton('클라이언트에 적용')
+        self.apply_button.setToolTip('RiftFlow 이름의 룬 페이지를 만들거나 교체합니다. 직접 만든 페이지는 건드리지 않습니다.')
+        self.apply_button.setEnabled(False)
+        self.apply_button.clicked.connect(self.request_apply)
+        rune_head.addWidget(self.apply_button)
         self.rune_button = QPushButton('룬 추천')
         self.rune_button.setObjectName('primary')
         self.rune_button.clicked.connect(self.request_runes)
@@ -187,6 +195,9 @@ class BeforeGamePage(QWidget):
         root.addLayout(rune_head)
         self.rune_view = RunePageView(self.assets)
         root.addWidget(self.rune_view)
+        self.rune_status = label('', 'subtle')
+        self.rune_status.hide()
+        root.addWidget(self.rune_status)
         self.champion.textChanged.connect(self._rune_champion_changed)
         self.answer = QTextBrowser()
         self.answer.setPlainText('챔피언을 고르면 공식 자료와 실제 픽창 정보를 바탕으로 질문에 답합니다.')
@@ -260,17 +271,38 @@ class BeforeGamePage(QWidget):
         self.runeRequested.emit(self._request())
 
     def show_rune_result(self, result, champion):
+        self.show_apply_status('')
         if result.get('page'):
-            self.rune_champion = champion
+            self.rune_champion, self.rune_page = champion, result['page']
             self.rune_view.show_page(result['page'])
         else:
-            self.rune_champion = None
+            self.rune_champion, self.rune_page = None, None
             self.rune_view.show_message(result.get('message') or '룬 추천을 받지 못했습니다.')
+        self._sync_buttons()
+
+    def request_apply(self):
+        if self.rune_page is not None and not self.busy:
+            self.runeApplyRequested.emit({'page': self.rune_page, 'champion': self.rune_champion})
+
+    def show_apply_status(self, text):
+        self.rune_status.setText(text)
+        self.rune_status.setVisible(bool(text))
+
+    def set_busy(self, busy):
+        self.busy = busy
+        self._sync_buttons()
+
+    def _sync_buttons(self):
+        for button in (self.send, self.refresh, self.rune_button):
+            button.setEnabled(not self.busy)
+        self.apply_button.setEnabled(not self.busy and self.rune_page is not None)
 
     def _rune_champion_changed(self, text):
         if self.rune_champion and text.strip() != self.rune_champion:
-            self.rune_champion = None
+            self.rune_champion, self.rune_page = None, None
+            self.show_apply_status('')
             self.rune_view.show_message('챔피언이 바뀌었습니다. 룬 추천을 다시 눌러 주세요.')
+            self._sync_buttons()
 
 
 STYLE = """
