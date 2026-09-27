@@ -24,6 +24,11 @@ class Settings:
     riot_limits: Tuple[Tuple[int, float], ...] = ((18, 1.0), (90, 120.0))
     device_daily_requests: int = 300       # 기기당 하루 라이엇 데이터 요청 수 (우리 API 기준)
     device_creations_per_hour: int = 20    # IP당 시간당 기기 등록 수 (토큰 대량 발급 방지)
+    # AI (2단계). 키가 없으면 AI 경로는 '사용할 수 없음'으로 응답한다.
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-3.5-flash-lite"
+    knowledge_db_path: str = "riftflow.db"   # 공식 게임 자료 DB (서버에서 하루 한 번 갱신)
+    device_daily_ai: int = 40              # 기기당 하루 AI 요청 수 (룬 추천 재요청 포함)
 
     @classmethod
     def from_env(cls):
@@ -39,4 +44,8 @@ class Settings:
             riot_limits=parse_limits(env("RIFTFLOW_RIOT_LIMITS", "18/1,90/120")),
             device_daily_requests=int(env("RIFTFLOW_DEVICE_DAILY_REQUESTS", "300")),
             device_creations_per_hour=int(env("RIFTFLOW_DEVICE_CREATIONS_PER_HOUR", "20")),
+            gemini_api_key=env("GEMINI_API_KEY", ""),
+            gemini_model=env("GEMINI_MODEL") or "gemini-3.5-flash-lite",
+            knowledge_db_path=env("RIFTFLOW_KNOWLEDGE_DB", "riftflow.db"),
+            device_daily_ai=int(env("RIFTFLOW_DEVICE_DAILY_AI", "40")),
         )

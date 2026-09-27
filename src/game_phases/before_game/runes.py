@@ -96,10 +96,14 @@ def _locked(entries):
     return [e['champion'] for e in entries or [] if e.get('locked')]
 
 
-def build_payload(db_path, personal_db_path, puuid, view, trees, *, champion, opponent, user_requests=None):
+def build_payload(db_path, personal_db_path, puuid, view, trees, *, champion, opponent, user_requests=None,
+                  recent_pages=None):
     mine = view.get('mine') or {}
     canonical = canonical_champion(db_path, champion)
-    pages = recent_rune_pages(personal_db_path, puuid, canonical) if puuid else []
+    if recent_pages is not None:
+        pages = recent_pages
+    else:
+        pages = recent_rune_pages(personal_db_path, puuid, canonical) if puuid else []
     return {
         'game_mode': ({'code': view['game_mode'], 'name': view.get('mode_name')} if view.get('game_mode') else None),
         'champion': champion_reference(db_path, champion) or {'name': champion},
@@ -118,7 +122,7 @@ def build_payload(db_path, personal_db_path, puuid, view, trees, *, champion, op
 
 
 def recommend_runes(db_path, personal_db_path, puuid, view, *, generate, champion=None, opponent=None,
-                    user_requests=None, download=False):
+                    user_requests=None, download=False, recent_pages=None):
     """이 픽창에 맞는 룬 페이지를 추천한다. generate(prompt, config=...)는 Gemini 호출 함수다.
 
     download=True면 룬 트리 구조가 없을 때 Data Dragon에서 룬 파일만 받아 채운다 (수집한 자료 DB 전용).
@@ -138,7 +142,7 @@ def recommend_runes(db_path, personal_db_path, puuid, view, *, generate, champio
     if trees is None:
         return fail(DOWNLOAD_FAILED if download else MISSING_TREES)
     payload = build_payload(db_path, personal_db_path, puuid, view, trees, champion=champion, opponent=opponent,
-                            user_requests=user_requests)
+                            user_requests=user_requests, recent_pages=recent_pages)
     errors = []
     for attempt in range(1, MAX_ATTEMPTS + 1):
         if errors:

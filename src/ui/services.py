@@ -46,8 +46,28 @@ def ask_database(path, question, version=None, *, generate=None, analysis=None,
     return result
 
 
-def ask_general(path, question, *, generate, profile=None):
-    """질문 범위는 넓게 유지하되 사실 답변에는 질문에 맞는 근거를 요구한다."""
+def profile_context(profile):
+    """전적 화면의 계정 정보를 AI에 보낼 요약으로 줄인다. 계정 식별자(PUUID, Riot ID, 경기 ID)는 넣지 않는다."""
+    if profile is None:
+        return None
+    rank = profile.get('rank')
+    return {
+        'rank': ({name: getattr(rank, name) for name in
+                  ('tier', 'division', 'league_points', 'wins', 'losses')} if rank else None),
+        'recent_matches': [
+            {name: getattr(match, name) for name in
+             ('played_at_epoch', 'game_duration_seconds', 'game_mode',
+              'champion_name', 'win', 'kills', 'deaths', 'assists', 'cs')}
+            for match in (profile.get('matches') or [])[:20]
+        ],
+    }
+
+
+def ask_general(path, question, *, generate, profile=None, context=None):
+    """질문 범위는 넓게 유지하되 사실 답변에는 질문에 맞는 근거를 요구한다.
+
+    context를 주면 profile 대신 그 요약을 쓴다 (서버: 앱이 profile_context로 만들어 보낸 값).
+    """
     from rag.retrieve import search, sources_of
     from game_phases.out_game.service import classify, PATCH_NUMBER
 
@@ -67,19 +87,8 @@ def ask_general(path, question, *, generate, profile=None):
                     message='질문에 해당하는 공식 패치 자료를 찾지 못했습니다. 설정 및 데이터에서 자료를 업데이트하거나 확인할 패치 버전을 알려 주세요.',
                     answer=None, evidence=[], sources=[], generated=False, error=None)
 
-    context = None
-    if profile is not None:
-        rank = profile.get('rank')
-        context = {
-            'rank': ({name: getattr(rank, name) for name in
-                      ('tier', 'division', 'league_points', 'wins', 'losses')} if rank else None),
-            'recent_matches': [
-                {name: getattr(match, name) for name in
-                 ('played_at_epoch', 'game_duration_seconds', 'game_mode',
-                  'champion_name', 'win', 'kills', 'deaths', 'assists', 'cs')}
-                for match in (profile.get('matches') or [])[:20]
-            ],
-        }
+    if context is None:
+        context = profile_context(profile)
     references = [dict(number=i, title=row['chunk']['title'],
                        version=row['chunk']['version'], text=row['chunk']['text'])
                   for i, row in enumerate(evidence, 1)]

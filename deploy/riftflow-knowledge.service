@@ -1,0 +1,12 @@
+# 공식 게임 자료(Data Dragon, 최근 패치 노트)를 서버 DB에 갱신한다. riftflow-knowledge.timer가 하루 한 번 실행.
+[Unit]
+Description=RiftFlow official game data update
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/riftflow
+Environment=PYTHONPATH=%h/riftflow/app/src
+ExecStart=%h/riftflow/.venv/bin/python -m knowledge --db %h/riftflow/data/riftflow.db update
+MemoryMax=512M
+CPUQuota=100%
+Nice=10

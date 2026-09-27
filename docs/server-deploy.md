@@ -5,15 +5,20 @@
 미니 PC에 맞춘 결정:
 
 - 실행: Docker 대신 **systemd 사용자 서비스 + SQLite**. 마인크래프트·디스코드 봇과 같은 방식이고, 메모리를 512MB로 제한해 마인크래프트에 영향을 주지 않습니다.
-- 외부 공개: **공유기 포트포워딩(443, 80) + DuckDNS 무료 주소 + Caddy 자동 HTTPS**.
+- 외부 공개: **DuckDNS 무료 주소 + Caddy 자동 HTTPS**. 미니 PC는 공유기 없이 통신사(KT)에서 공인 IP를 직접 받으므로 포트포워딩이 필요 없습니다. 대신 **호스트 방화벽(ufw)이 유일한 보호막**입니다.
 - RiftFlow 서버 자체(`127.0.0.1:8787`)는 외부에 열지 않습니다. 외부 요청은 Caddy가 HTTPS로 받아 넘깁니다.
 
-1단계에서 서버가 대신하는 것은 **라이엇 데이터(계정·랭크·전적·경기 상세)** 입니다. AI(Gemini)는 아직 각 앱의 키로 호출합니다(2단계에서 서버로 이전).
+서버가 대신하는 것:
+
+- **라이엇 데이터**(1단계): 계정·랭크·전적·경기 상세
+- **AI**(2단계): 룬 추천, 픽창 질문, 인게임 질문, AI에게 질문. 서버가 공식 자료를 검색하고 Gemini를 부릅니다.
+
+그래서 배포판 앱에는 API 키가 하나도 들어가지 않습니다. 서버의 공식 게임 자료는 매일 새벽 5시에 자동으로 갱신됩니다(`riftflow-knowledge.timer`).
 
 ## 구성
 
 ```text
-인터넷 ──443/80──► 공유기 ──► 미니 PC
+인터넷 ──443/80──► 미니 PC (공인 IP 직접, ufw로 필요한 포트만 허용)
                                ├─ Caddy (HTTPS, 인증서 자동)  ──► 127.0.0.1:8787
                                ├─ riftflow-api (systemd 사용자 서비스, uvicorn)
                                │    └─ ~/riftflow/data/server.db (SQLite)
@@ -26,8 +31,10 @@
 | `~/riftflow/app/` | 올린 코드 (`src/contracts`, `src/riot`, `src/server`, `deploy/`) |
 | `~/riftflow/.venv/` | 서버 전용 Python 환경 (`deploy/requirements-server.txt`만 설치) |
 | `~/riftflow/server.env` | 라이엇 키 등 설정. **본인만 읽기(600)** |
-| `~/riftflow/data/server.db` | 기기 토큰, 사용량, 라이엇 데이터 캐시 |
+| `~/riftflow/data/server.db` | 기기 토큰, 사용량, 라이엇 데이터 캐시, 룬 추천 공유 캐시 |
+| `~/riftflow/data/riftflow.db` | 공식 게임 자료 (AI 근거, 룬 트리). 매일 자동 갱신 |
 | `~/.config/systemd/user/riftflow-api.service` | 서비스 정의 |
+| `~/.config/systemd/user/riftflow-knowledge.{service,timer}` | 공식 자료 매일 갱신 |
 | `~/.config/duckdns/` | DuckDNS 주소와 토큰. **본인만 읽기** |
 
 ## 처음 설치
@@ -40,14 +47,10 @@
 2. 원하는 이름으로 주소를 추가합니다 (예: `riftflow-team` → `riftflow-team.duckdns.org`). 현재 IP가 자동으로 들어갑니다.
 3. 화면 위쪽의 **token**은 4번에서 서버에 직접 붙여 넣습니다.
 
-### 2. 공유기 포트포워딩
+### 2. 네트워크 (포트포워딩 불필요)
 
-마인크래프트(25565)와 같은 방식으로 아래 두 개를 미니 PC로 넘깁니다.
-
-| 외부 포트 | 내부 포트 | 용도 |
-|---|---|---|
-| 443 (TCP) | 443 | HTTPS |
-| 80 (TCP) | 80 | HTTPS 인증서 발급 확인용. 통신사가 80을 막으면 443만으로도 발급됩니다 |
+미니 PC는 KT에서 공인 IP를 DHCP로 직접 받습니다(`ip route`의 기본 게이트웨이가 통신사 장비). 공유기가 없으므로 포트포워딩 단계는 없습니다.
+80번은 HTTPS 인증서 발급 확인에 쓰고, 막혀 있어도 Caddy가 443번으로 발급을 시도합니다. IP가 바뀔 수 있어 DuckDNS 자동 갱신(4번)이 필요합니다.
 
 ### 3. 코드 올리기 (개발 PC)
 
@@ -62,15 +65,13 @@ RIFTFLOW_HOST=server@<서버 주소> RIFTFLOW_SSH_KEY=<개인 키 경로> RIFTFL
 ### 4. 서버에서 한 번만 할 일 (SSH 접속 후, sudo 필요)
 
 ```bash
-sudo apt update && sudo apt install -y caddy
-sudo loginctl enable-linger server
-sudo ufw status
+sudo apt update && sudo apt install -y caddy && sudo loginctl enable-linger server
 ```
 
-`ufw status`가 `active`면 포트를 엽니다.
+방화벽: 쓰는 포트만 열고 나머지는 막습니다. **SSH(22)를 먼저 허용**해야 원격 접속이 끊기지 않습니다.
 
 ```bash
-sudo ufw allow 80/tcp && sudo ufw allow 443/tcp
+sudo ufw allow 22/tcp && sudo ufw allow 25565/tcp && sudo ufw allow 80/tcp && sudo ufw allow 443/tcp && sudo ufw default deny incoming && sudo ufw enable
 ```
 
 Caddy 설정 (`riftflow-team`을 1번에서 만든 이름으로 바꿉니다):
@@ -80,7 +81,7 @@ sed 's/DOMAIN/riftflow-team.duckdns.org/' ~/riftflow/app/deploy/Caddyfile | sudo
 sudo systemctl reload caddy
 ```
 
-라이엇 키 입력 (`RIOT_API_KEY=` 뒤에 붙여 넣고 저장):
+라이엇 키와 Gemini 키 입력 (`RIOT_API_KEY=`, `GEMINI_API_KEY=` 뒤에 각각 붙여 넣고 저장):
 
 ```bash
 nano ~/riftflow/server.env
@@ -105,13 +106,28 @@ chmod 600 ~/.config/duckdns/token
 
 ### 7. 앱 연결
 
-각 사용자의 `.env`에 서버 주소를 넣습니다. 그러면 전적 기능에 라이엇 키가 필요 없습니다.
+배포판은 exe 옆의 `server.txt`에 서버 주소가 들어 있어 따로 할 일이 없습니다(아래 "배포판 만들기").
+저장소에서 직접 실행하는 개발용 앱은 `.env`에 서버 주소를 넣으면 전적·AI에 키가 필요 없습니다.
 
 ```text
 RIFTFLOW_SERVER_URL=https://riftflow-team.duckdns.org
 ```
 
-앱의 **설정 및 데이터** 화면에 `전적: RiftFlow 서버`로 표시됩니다.
+앱의 **설정 및 데이터** 화면에 `AI: RiftFlow 서버 · 전적: RiftFlow 서버`로 표시됩니다.
+
+## 배포판 만들기 (개발 PC)
+
+```bash
+.venv\Scripts\python.exe packaging\build.py --server-url https://riftflow-team.duckdns.org
+```
+
+`dist/RiftFlow-<버전>.zip`이 만들어집니다(약 50MB). 받는 사람은 압축을 풀고 `RiftFlow.exe`를 더블클릭하면 됩니다. 안에 `사용법.txt`가 들어 있습니다.
+
+- 키는 들어가지 않습니다. AI와 전적은 `server.txt`의 서버로 처리합니다.
+- 서버 주소가 바뀌면 다시 빌드하지 않고 `RiftFlow/server.txt`만 고쳐도 됩니다.
+- 배포판은 데이터를 `%LOCALAPPDATA%\RiftFlow`에 저장하고, 처음 켤 때 공식 게임 자료를 자동으로 받습니다.
+- 서명하지 않은 exe라 처음 실행할 때 "Windows의 PC 보호" 창이 뜹니다. "추가 정보 → 실행"을 누르면 됩니다.
+- PyInstaller가 필요합니다: `uv pip install --python .venv\Scripts\python.exe pyinstaller` (pip 환경이면 `pip install pyinstaller`)
 
 ## 운영
 
@@ -127,6 +143,7 @@ RIFTFLOW_SERVER_URL=https://riftflow-team.duckdns.org
 
 - `RIFTFLOW_RIOT_LIMITS`: 라이엇 요청 한도. Personal 키 기본값 `18/1,90/120`, Production 키 승인 뒤 `480/10,29000/600`
 - `RIFTFLOW_DEVICE_DAILY_REQUESTS`: 기기당 하루 전적 요청 수 (기본 300)
+- `RIFTFLOW_DEVICE_DAILY_AI`: 기기당 하루 AI 요청 수 (기본 40). 서버의 Gemini 무료 한도(프로젝트당 하루 20회 수준)는 모든 사용자가 나눠 쓰므로, 여러 명이 쓰면 Gemini 결제 연결이 필요합니다
 
 ## 주의
 

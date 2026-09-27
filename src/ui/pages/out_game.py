@@ -74,7 +74,7 @@ class OutGamePage(QWidget):
         self.history_stack = QStackedWidget()
         loading = QFrame(objectName="loadingPanel")
         loading_box = QVBoxLayout(loading)
-        self.loading_label = QLabel("Roading .", objectName="loadingText")
+        self.loading_label = QLabel("Loading .", objectName="loadingText")
         self.loading_label.setAlignment(Qt.AlignCenter)
         loading_box.addWidget(self.loading_label)
         self.history_stack.addWidget(loading)
@@ -89,7 +89,7 @@ class OutGamePage(QWidget):
 
     def _animate_loading(self):
         self.loading_step = self.loading_step % 3 + 1
-        self.loading_label.setText("Roading " + "." * self.loading_step)
+        self.loading_label.setText("Loading " + "." * self.loading_step)
 
     def _profile_card(self):
         card = QFrame(objectName="lightCard")

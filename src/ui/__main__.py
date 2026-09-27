@@ -27,7 +27,8 @@ from .pages.out_game import OutGamePage
 from .pages.before_game import BeforeGamePage
 from .pages.in_game import InGamePage
 from .match_detail import MatchDetailDialog
-from .services import ask_general, create_demo, sync_database
+from .services import ask_general, create_demo, profile_context, sync_database
+from knowledge.before_game import recent_rune_pages
 
 STYLE = """
 QWidget { background: #101722; color: #e8edf4; font-family: 'Arial'; font-size: 14px; }
@@ -124,7 +125,7 @@ class Job(QThread):
 class Window(QMainWindow):
     riot_login_detected = Signal(object)
 
-    def __init__(self, data_dir):
+    def __init__(self, data_dir, auto_sync=False):
         super().__init__()
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -194,6 +195,9 @@ class Window(QMainWindow):
         if has_live_data:
             self.mode.setCurrentIndex(1)
         self.reload()
+        if auto_sync and not has_live_data:
+            # 배포판 첫 실행: 공식 자료가 없으면 알아서 받는다 (설정 화면을 찾을 필요 없게).
+            QTimer.singleShot(1500, self.sync_data)
         self.riot_login_detected.connect(self.on_riot_login_detected)
         self.champ_timer = QTimer(self)
         self.champ_timer.setInterval(2500)
@@ -298,15 +302,21 @@ class Window(QMainWindow):
     def ask_in_game(self, request):
         if self.jobs:
             return
-        if not os.environ.get('GEMINI_API_KEY'):
+        if not self.ai_ready():
             self.in_game.answer.setPlainText('AI 답변에 필요한 GEMINI_API_KEY를 .env에 설정해 주세요.')
             return
         model = self.model.text().strip() or DEFAULT_MODEL
         path = self.db_path
         self.in_game.answer.setPlainText('현재 스코어보드와 공식 자료를 확인하고 있습니다…')
+        server = self.server()
+        if server is not None:
+            from api_client.coach import coach_in_game
+            work = lambda: coach_in_game(server, request['view'], request['question'])
+        else:
+            work = lambda: answer_in_game(path, request['view'], request['question'],
+                                          generate=lambda prompt: generate(prompt, model=model, retries=0))
         self.start_job(
-            lambda: answer_in_game(path, request['view'], request['question'],
-                                   generate=lambda prompt: generate(prompt, model=model, retries=0)),
+            work,
             self.show_in_game_answer, on_error=self.in_game.answer.setPlainText)
 
     def show_in_game_answer(self, result):
@@ -342,7 +352,7 @@ class Window(QMainWindow):
         챔피언을 이리저리 올려 보는 동안 호출하지 않도록 두 번의 폴링(약 2.5초) 동안 같아야 부른다.
         같은 조건의 추천은 캐시로 바로 보여 주고, 자동 요청은 조건마다 한 번만 한다(실패해도 반복하지 않음).
         """
-        if not os.environ.get('GEMINI_API_KEY'):
+        if not self.ai_ready():
             return
         request = self.before_game._request()
         if not request['champion']:
@@ -390,18 +400,30 @@ class Window(QMainWindow):
     def ask_before_game(self, request):
         if self.jobs:
             return
-        if not os.environ.get('GEMINI_API_KEY'):
+        if not self.ai_ready():
             self.before_game.answer.setPlainText('AI 답변에 필요한 GEMINI_API_KEY를 .env에 설정해 주세요.')
             return
         model = self.model.text().strip() or DEFAULT_MODEL
         puuid = self.riot_context['player'].puuid if self.riot_context else None
         self.before_game.answer.setPlainText('확정된 픽과 공식 자료를 확인하고 있습니다…')
-        self.start_job(
-            lambda: answer_before_game(
-                self.db_path, self.personal_path, puuid, request['view'], request['question'],
+        server, path = self.server(), self.db_path
+        if server is not None:
+            # 개인 상성 기록은 이 PC에서 계산해 요약만 보낸다 (PUUID는 보내지 않음).
+            from api_client.coach import coach_pick
+            lane = (request['view'].get('mine') or {}).get('position')
+            observations = (personal_context(self.personal_path, puuid, canonical_champion(path, request['champion']),
+                                             canonical_champion(path, request['opponent']), lane) if puuid else None)
+            work = lambda: coach_pick(server, request['view'], request['question'], champion=request['champion'],
+                                      opponent=request['opponent'], user_requests=request['user_requests'],
+                                      observations=observations)
+        else:
+            work = lambda: answer_before_game(
+                path, self.personal_path, puuid, request['view'], request['question'],
                 generate=lambda prompt: generate(prompt, model=model, retries=0),
                 champion=request['champion'], opponent=request['opponent'],
-                user_requests=request['user_requests']),
+                user_requests=request['user_requests'])
+        self.start_job(
+            work,
             self.show_before_game_answer,
         )
 
@@ -409,7 +431,7 @@ class Window(QMainWindow):
         """룬 추천을 요청한다. 버튼은 항상 새로 받고, 자동 추천은 maybe_auto_recommend가 캐시를 먼저 본다."""
         if self.jobs:
             return False
-        if not os.environ.get('GEMINI_API_KEY'):
+        if not self.ai_ready():
             self.before_game.rune_view.show_message('룬 추천에 필요한 GEMINI_API_KEY를 .env에 설정해 주세요.')
             return False
         model = self.model.text().strip() or DEFAULT_MODEL
@@ -421,11 +443,19 @@ class Window(QMainWindow):
         self.rune_shown_key = key
         self.before_game.rune_view.show_message('챔피언과 상대 조합, 공식 룬 설명을 바탕으로 룬을 고르고 있습니다…')
         self.status.setText('룬 추천 중')
-        self.start_job(
-            lambda: recommend_runes(
+        server = self.server()
+        if server is not None:
+            from api_client.coach import recommend_runes as recommend_remote
+            pages = recent_rune_pages(personal, puuid, canonical_champion(path, champion)) if puuid else []
+            work = lambda: recommend_remote(server, request['view'], champion=champion, opponent=request['opponent'],
+                                            user_requests=request['user_requests'], recent_pages=pages)
+        else:
+            work = lambda: recommend_runes(
                 path, personal, puuid, request['view'], champion=champion, opponent=request['opponent'],
                 user_requests=request['user_requests'], download=download,
-                generate=lambda prompt, **options: generate(prompt, model=model, retries=0, **options)),
+                generate=lambda prompt, **options: generate(prompt, model=model, retries=0, **options))
+        self.start_job(
+            work,
             lambda result: self.show_rune_recommendation(result, champion, key),
             on_error=self.before_game.rune_view.show_message)
         return True
@@ -518,6 +548,18 @@ class Window(QMainWindow):
         layout.addStretch()
         layout.addWidget(label(LEGAL, 'muted'))
 
+    @staticmethod
+    def server():
+        """RIFTFLOW_SERVER_URL이 있으면 AI·전적을 서버로 처리한다 (배포판은 키 없이 이 방식)."""
+        url = os.environ.get('RIFTFLOW_SERVER_URL')
+        if not url:
+            return None
+        from api_client import shared_client
+        return shared_client(url)
+
+    def ai_ready(self):
+        return self.server() is not None or bool(os.environ.get('GEMINI_API_KEY'))
+
     @property
     def db_path(self):
         return self.demo_path if self.mode.currentIndex() == 0 else self.live_path
@@ -537,8 +579,9 @@ class Window(QMainWindow):
             self.status.setText('DB를 읽지 못했습니다. 파일 상태를 확인하세요.')
         riot = ('RiftFlow 서버' if os.environ.get('RIFTFLOW_SERVER_URL') else
                 'Riot 키 ' + ('설정됨' if os.environ.get('RIOT_API_KEY') else '미설정'))
-        self.connection.setText('Gemini 키: %s  ·  전적: %s' %
-                                ('설정됨' if os.environ.get('GEMINI_API_KEY') else '미설정', riot))
+        ai = 'RiftFlow 서버' if os.environ.get('RIFTFLOW_SERVER_URL') else (
+            'Gemini 키 ' + ('설정됨' if os.environ.get('GEMINI_API_KEY') else '미설정'))
+        self.connection.setText('AI: %s  ·  전적: %s' % (ai, riot))
 
     def start_job(self, function, callback, on_error=None):
         job = Job(function, self)
@@ -582,17 +625,22 @@ class Window(QMainWindow):
     def ask_out_game(self, question):
         if self.jobs:
             return
-        if not os.environ.get('GEMINI_API_KEY'):
+        if not self.ai_ready():
             self.out_game.show_error('AI 답변에 필요한 GEMINI_API_KEY를 .env에 설정한 뒤 앱을 다시 실행하세요.')
             return
         model = self.model.text().strip() or DEFAULT_MODEL
         path, profile = self.db_path, self.riot_context
         self.status.setText('AI 답변을 준비하고 있습니다.')
-        self.start_job(
-            lambda: ask_general(path, question, profile=profile,
-                                generate=lambda prompt: generate(prompt, model=model, retries=0)),
-            self.show_out_game_answer,
+        self.start_job(lambda: self.general_answer(path, question, profile, model), self.show_out_game_answer,
         )
+
+    def general_answer(self, path, question, profile, model):
+        server = self.server()
+        if server is not None:
+            from api_client.coach import coach_general
+            return coach_general(server, question, profile_context(profile))
+        return ask_general(path, question, profile=profile,
+                           generate=lambda prompt: generate(prompt, model=model, retries=0))
 
     def show_out_game_answer(self, result):
         self.out_game.show_answer(result)
@@ -651,14 +699,13 @@ class Window(QMainWindow):
         if not question:
             return
         model = self.model.text().strip() or DEFAULT_MODEL
-        if not os.environ.get('GEMINI_API_KEY'):
+        if not self.ai_ready():
             self.reply.setPlainText('AI 답변에 필요한 Gemini API 키가 없습니다. .env 파일에 GEMINI_API_KEY를 설정한 뒤 앱을 다시 실행하세요.')
             return
         path, profile = self.db_path, self.riot_context
-        generator = lambda prompt: generate(prompt, model=model, retries=0)
         self.reply.setPlainText('AI 답변을 준비하고 있습니다…\n응답은 최대 약 60초 걸릴 수 있습니다.')
         self.status.setText('연결된 전적과 질문을 바탕으로 답변 중' if profile else '질문을 바탕으로 답변 중')
-        self.start_job(lambda: ask_general(path, question, generate=generator, profile=profile), self.show_answer)
+        self.start_job(lambda: self.general_answer(path, question, profile, model), self.show_answer)
 
     def show_answer(self, result):
         esc = html.escape
@@ -699,17 +746,39 @@ class Window(QMainWindow):
         event.accept()
 
 
+def frozen_defaults():
+    """배포판(PyInstaller)으로 실행 중이면 (데이터 폴더, .env 경로)를 사용자 폴더 기준으로 정한다.
+
+    더블클릭으로 켜면 실행 위치가 일정하지 않아서 %LOCALAPPDATA%\\RiftFlow에 저장한다.
+    서버 주소는 exe 옆의 server.txt에서 읽는다. 주소가 바뀌어도 다시 빌드하지 않고 이 파일만 고치면 된다.
+    """
+    if not getattr(sys, 'frozen', False):
+        return Path('data'), Path('.env')
+    base = Path(os.environ.get('LOCALAPPDATA') or Path.home()) / 'RiftFlow'
+    server_file = Path(sys.executable).with_name('server.txt')
+    try:
+        url = server_file.read_text(encoding='utf-8').strip()
+    except OSError:
+        url = ''
+    if url:
+        os.environ.setdefault('RIFTFLOW_SERVER_URL', url)
+    return base / 'data', base / '.env'
+
+
 def main():
+    data_default, env_default = frozen_defaults()
     parser = argparse.ArgumentParser(description='RiftFlow desktop MVP')
-    parser.add_argument('--data-dir', type=Path, default=Path('data'))
-    parser.add_argument('--env', type=Path, default=Path('.env'))
+    parser.add_argument('--data-dir', type=Path, default=data_default)
+    parser.add_argument('--env', type=Path, default=env_default)
     parser.add_argument('--screenshot', type=Path, help='오프라인 화면 캡처 후 종료')
     args = parser.parse_args()
     load_env(args.env)
+    # 서버 기기 토큰도 데이터 폴더에 둔다.
+    os.environ.setdefault('RIFTFLOW_DEVICE_TOKEN_PATH', str(Path(args.data_dir) / 'device_token'))
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setStyle('Fusion')
     app.setStyleSheet(STYLE)
-    window = Window(args.data_dir)
+    window = Window(args.data_dir, auto_sync=getattr(sys, 'frozen', False) and not args.screenshot)
     window.show()
     if args.screenshot:
         def capture():

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily RiftFlow official game data update
+
+[Timer]
+# 매일 새벽 5시(서버 시간). 그 시각에 꺼져 있었으면 켜진 뒤 한 번 실행.
+OnCalendar=*-*-* 05:00:00
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

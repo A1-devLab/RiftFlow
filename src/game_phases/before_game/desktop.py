@@ -57,7 +57,8 @@ def opponent_for_lane(view):
 
 
 def answer_before_game(db_path, personal_db_path, puuid, view, question, *, generate,
-                       champion=None, opponent=None, user_requests=None):
+                       champion=None, opponent=None, user_requests=None, observations=None):
+    # observations를 주면 개인 기록 파일 대신 그 값을 쓴다 (서버: 앱이 계산해 보낸 개인 상성 기록).
     """Ground verified game facts in DB and personal observations; never invent matchup rates."""
     champion = (champion or (view.get('mine') or {}).get('champion') or '').strip()
     opponent = (opponent or opponent_for_lane(view) or '').strip()
@@ -79,9 +80,11 @@ def answer_before_game(db_path, personal_db_path, puuid, view, question, *, gene
         evidence = []
     if not evidence:
         return {'answer': None, 'message': '공식 챔피언·룬 자료가 없습니다. 설정 및 데이터에서 공식 자료를 먼저 업데이트해 주세요.', 'generated': False}
-    observations = personal_context(personal_db_path, puuid, canonical_champion(db_path, champion),
-                                    canonical_champion(db_path, opponent),
-                                    (view.get('mine') or {}).get('position')) if puuid else None
+    if observations is None and puuid:
+        observations = personal_context(personal_db_path, puuid, canonical_champion(db_path, champion),
+                                        canonical_champion(db_path, opponent),
+                                        (view.get('mine') or {}).get('position'))
+    observations = dict(observations) if observations else None
     if observations and observations.get('latest_rune_page'):
         observations['latest_rune_page'] = named_rune_page(observations['latest_rune_page'], rune_catalog(db_path))
     references = [{'name': row['chunk']['title'], 'kind': row['chunk']['kind'],
