@@ -58,7 +58,9 @@ def as_document(row):
             if fields['stats']:
                 lines.append('기본 능력치: ' + json.dumps(fields['stats'], ensure_ascii=False))
         elif kind == "rune":
-            fields = {"key": entity.get('key'), "short_description": plain(entity.get('shortDesc'))}
+            fields = {"key": entity.get('key'), "short_description": plain(entity.get('shortDesc')),
+                      "tree_id": entity.get('tree_id'), "tree_key": entity.get('tree_key'),
+                      "tree_name": entity.get('tree_name'), "slot_index": entity.get('slot_index')}
     return {"doc_id": "%s:%s:%s" % (kind, version, row["entity_id"]),
             "kind": kind, "entity_id": row["entity_id"], "version": version,
             "subject_name": row["name"], "title": row["name"],
