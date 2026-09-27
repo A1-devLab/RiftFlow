@@ -40,6 +40,11 @@ CREATE TABLE IF NOT EXISTS player_match_lists (
     fetched_at REAL NOT NULL,
     PRIMARY KEY (puuid, count)
 );
+CREATE TABLE IF NOT EXISTS rune_recommendations (
+    cache_key TEXT PRIMARY KEY,
+    result TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS matches (
     match_id TEXT PRIMARY KEY,
     game_start INTEGER,
@@ -57,6 +62,9 @@ class Database:
         with closing(self.connect()) as db, db:
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript(SCHEMA)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(usage_daily)")}
+            if "ai_requests" not in columns:   # 1단계에서 만든 DB에 AI 사용량 열을 추가
+                db.execute("ALTER TABLE usage_daily ADD COLUMN ai_requests INTEGER NOT NULL DEFAULT 0")
 
     def connect(self):
         db = sqlite3.connect(self.path, timeout=15)
@@ -92,6 +100,26 @@ class Database:
                        (device_id, day))
             return db.execute("SELECT riot_requests FROM usage_daily WHERE device_id=? AND day=?",
                               (device_id, day)).fetchone()[0]
+
+    def ai_requests(self, device_id, day):
+        row = self.one("SELECT ai_requests FROM usage_daily WHERE device_id=? AND day=?", (device_id, day))
+        return row["ai_requests"] if row else 0
+
+    def count_ai(self, device_id, day, amount):
+        if amount <= 0:
+            return
+        self.run("""INSERT INTO usage_daily (device_id, day, riot_requests, ai_requests) VALUES (?, ?, 0, ?)
+                    ON CONFLICT(device_id, day) DO UPDATE SET ai_requests = ai_requests + excluded.ai_requests""",
+                 (device_id, day, amount))
+
+    def rune_cache(self, cache_key):
+        row = self.one("SELECT result FROM rune_recommendations WHERE cache_key=?", (cache_key,))
+        return json.loads(row["result"]) if row else None
+
+    def save_rune_cache(self, cache_key, result):
+        import time
+        self.run("INSERT OR REPLACE INTO rune_recommendations VALUES (?, ?, ?)",
+                 (cache_key, json.dumps(result, ensure_ascii=False), time.time()))
 
     # --- cached Riot data
     def cached_json(self, table, key_column, key, column, max_age, now, extra=""):

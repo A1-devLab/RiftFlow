@@ -116,6 +116,11 @@ uv pip install -e .
 
 이미 `.venv`가 있다면 `uv pip install --python .venv\Scripts\python.exe -e .`처럼 설치할 가상환경을 직접 지정할 수 있습니다.
 
+## 배포판 (Windows)
+
+개발 환경 없이 쓰려면 배포판 zip을 받아 압축을 풀고 `RiftFlow.exe`를 더블클릭합니다. 배포판에는 API 키가 없고, AI와 전적은 RiftFlow 서버가 처리합니다.
+배포판을 만드는 방법은 `docs/server-deploy.md`의 "배포판 만들기"에 있습니다.
+
 ## 실행
 
 가상환경을 켰다면:

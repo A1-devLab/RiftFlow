@@ -12,7 +12,7 @@ SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10)
 
 cd "$(dirname "$0")/.."
 # 1) 파일 올리기: 이전 코드는 지우고 새로 푼다 (지운 파일이 서버에 남지 않게)
-tar czf - --exclude='__pycache__' pyproject.toml src/contracts src/riot src/server deploy \
+tar czf - --exclude='__pycache__' pyproject.toml src/contracts src/riot src/server src/knowledge src/rag src/game_phases src/ui deploy \
   | ssh "${SSH_OPTS[@]}" "$HOST" \
     'mkdir -p ~/riftflow/app && rm -rf ~/riftflow/app/src ~/riftflow/app/deploy && tar xzf - -C ~/riftflow/app'
 # 2) 설치와 재시작: 방금 올린 스크립트를 서버에서 실행

@@ -84,9 +84,15 @@ class ServerClient:
 
     def get_json(self, path, params=None):
         """GET 요청. 404는 None(찾을 수 없음), 그 밖의 실패는 예외. 잠깐 기다리라는 응답은 한 번 재시도한다."""
+        return self._json("GET", path, params=params)
+
+    def post_json(self, path, body):
+        return self._json("POST", path, json=body)
+
+    def _json(self, method, path, **kwargs):
         renewed = waited = False
         while True:
-            response = self._send("GET", path, params=params, headers=self._headers(self.token()))
+            response = self._send(method, path, headers=self._headers(self.token()), **kwargs)
             if response.status_code == 200:
                 return response.json()
             if response.status_code == 404:
