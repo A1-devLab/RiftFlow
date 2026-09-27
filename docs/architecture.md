@@ -1,16 +1,14 @@
-# 프로젝트 구조 및 담당 영역
+# 프로젝트 구조
 
-## 담당
+## 모듈
 
-| 담당 | 영역 | 작업 위치 |
+| 모듈 | 역할 | 위치 |
 |---|---|---|
-| 박선제 | 프로그램 구상, UI 설계 | docs/ui/ |
-| 이윤환 | 라이엇 API 조사 및 연동 | src/riot/ |
-| 박시영 | 패치 자료 수집, DB 및 업데이트 | src/knowledge/ |
-| 이찬영 | Gemini 및 RAG | src/rag/ |
-| 프로젝트 관리자 | 공통 규격, 모듈 통합 | src/ 및 공통 규격 문서 |
-
-실제 Python UI 구현 담당은 팀에서 정합니다.
+| UI 설계 | 프로그램 구상, 화면 설계 자료 | docs/ui/ |
+| riot | 라이엇 API 연동 | src/riot/ |
+| knowledge | 패치 자료 수집, DB 및 업데이트 | src/knowledge/ |
+| rag | 근거 검색과 Gemini 답변 | src/rag/ |
+| 공통 | 공통 데이터 형식, 모듈 통합 | src/contracts/ 및 공통 규격 문서 |
 
 ## 연결 방향
 
