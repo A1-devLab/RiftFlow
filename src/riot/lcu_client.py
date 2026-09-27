@@ -52,12 +52,14 @@ import requests
 import urllib3
 
 from contracts.riot import (
+    AppliedRunePage,
     ChampSelectMember,
     ChampSelectSession,
     ClientNotRunning,
     PlayerIdentity,
     PostGameSummary,
     RiotApiError,
+    RunePageSlotsFull,
 )
 
 from .service import get_player
@@ -161,6 +163,31 @@ def _lcu_get(port: int, password: str, endpoint: str) -> Optional[Any]:
         return response.json()
     except ValueError:
         return None
+
+
+def _lcu_request(port: int, password: str, method: str, endpoint: str,
+                 body: Any = None) -> Tuple[Optional[int], Any]:
+    """LCU에 쓰기 요청을 보낸다. (상태 코드, JSON 또는 None). 통신 실패면 (None, None).
+
+    읽기 전용인 _lcu_get과 달리 실패 이유를 호출부가 사용자에게 알려야 해서 상태 코드를 같이 돌려준다.
+    """
+    token = base64.b64encode(f"riot:{password}".encode()).decode()
+    try:
+        response = requests.request(
+            method,
+            f"https://127.0.0.1:{port}{endpoint}",
+            headers={"Authorization": f"Basic {token}"},
+            json=body,
+            timeout=5.0,
+            verify=False,
+        )
+    except requests.exceptions.RequestException:
+        return None, None
+    try:
+        data = response.json() if response.content else None
+    except ValueError:
+        data = None
+    return response.status_code, data
 
 
 def get_current_summoner() -> PlayerIdentity:
@@ -417,6 +444,76 @@ def wait_for_post_game_summary(
             return summary
         time.sleep(interval)
     return None
+
+
+RIFTFLOW_PAGE_PREFIX = "RiftFlow"
+_PAGE_NAME_LIMIT = 25   # 클라이언트 룬 페이지 이름 칸보다 길면 잘릴 수 있어 여유 있게 자른다
+
+
+def get_rune_pages() -> Optional[List[dict]]:
+    """클라이언트의 룬 페이지 목록(원본). 클라이언트가 꺼져 있으면 None."""
+    credentials = _find_lcu_credentials()
+    if credentials is None:
+        return None
+    pages = _lcu_get(*credentials, "/lol-perks/v1/pages")
+    return pages if isinstance(pages, list) else None
+
+
+def _lcu_error(status: Optional[int], data: Any, action: str) -> RiotApiError:
+    if status is None:
+        return RiotApiError(f"롤 클라이언트와 통신하지 못해 {action}하지 못했습니다.")
+    detail = data.get("message") if isinstance(data, dict) else None
+    return RiotApiError(f"{action}하지 못했습니다 (클라이언트 응답 {status}{': ' + detail if detail else ''}).")
+
+
+def apply_rune_page(name: str, primary_style_id: int, sub_style_id: int,
+                    selected_perk_ids: List[int]) -> AppliedRunePage:
+    """룬 페이지를 클라이언트에 적용하고 현재 페이지로 선택한다.
+
+    사용자가 만든 페이지는 절대 지우거나 덮어쓰지 않는다. 이름이 RiftFlow로 시작하는
+    삭제 가능한 페이지가 있으면 그것만 교체하고, 없으면 빈 칸에 새로 만든다. 빈 칸이
+    없으면 RunePageSlotsFull을 던진다.
+
+    교체는 PUT 대신 '우리 페이지 삭제 → 새로 생성'으로 한다. 클라이언트 버전에 따라
+    PUT 수정이 반영되지 않는 경우가 알려져 있어서다.
+
+    Raises:
+        ClientNotRunning: 클라이언트가 꺼져 있을 때
+        RunePageSlotsFull: 칸이 가득 차고 교체할 RiftFlow 페이지가 없을 때
+        RiotApiError: 그 밖의 클라이언트 거부·통신 실패
+    """
+    credentials = _find_lcu_credentials()
+    if credentials is None:
+        raise ClientNotRunning("롤 클라이언트가 실행 중이 아닙니다.")
+    port, password = credentials
+    status, pages = _lcu_request(port, password, "GET", "/lol-perks/v1/pages")
+    if status != 200 or not isinstance(pages, list):
+        raise _lcu_error(status, pages, "룬 페이지 목록을 읽")
+
+    name = name[:_PAGE_NAME_LIMIT]
+    own = next((p for p in pages if str(p.get("name", "")).startswith(RIFTFLOW_PAGE_PREFIX)
+                and p.get("isDeletable", p.get("isEditable")) and p.get("id") is not None), None)
+    if own is not None:
+        status, data = _lcu_request(port, password, "DELETE", f"/lol-perks/v1/pages/{int(own['id'])}")
+        if status is None or status >= 300:
+            raise _lcu_error(status, data, "이전 RiftFlow 룬 페이지를 교체")
+    else:
+        status, inventory = _lcu_request(port, password, "GET", "/lol-perks/v1/inventory")
+        owned = inventory.get("ownedPageCount") if status == 200 and isinstance(inventory, dict) else None
+        custom = [p for p in pages if p.get("isDeletable")]
+        if isinstance(owned, int) and len(custom) >= owned:
+            raise RunePageSlotsFull(owned)
+
+    body = {"name": name, "primaryStyleId": int(primary_style_id), "subStyleId": int(sub_style_id),
+            "selectedPerkIds": [int(perk) for perk in selected_perk_ids], "current": True}
+    status, page = _lcu_request(port, password, "POST", "/lol-perks/v1/pages", body)
+    if status is None or status >= 300 or not isinstance(page, dict) or page.get("id") is None:
+        raise _lcu_error(status, page, "룬 페이지를 만들")
+    if not page.get("current"):
+        # 생성 요청의 current가 무시되는 클라이언트 버전 대비. 실패해도 페이지 자체는 만들어졌다.
+        _lcu_request(port, password, "PUT", "/lol-perks/v1/currentpage", int(page["id"]))
+    return AppliedRunePage(page_id=int(page["id"]), name=page.get("name") or name,
+                           replaced=own is not None, is_valid=page.get("isValid"))
 
 
 def start_champ_select_watcher(

@@ -2,7 +2,7 @@
 
 모델은 룬 ID를 고르기만 하고, 페이지 규칙은 knowledge.runes.validate_page가 검사한다.
 규칙을 어기면 틀린 이유를 알려 주고 딱 한 번 다시 고르게 한다. 그래도 틀리면 추천하지 않는다.
-클라이언트에 적용하는 기능은 없다 (다음 단계).
+검사를 통과한 페이지만 apply_recommended_page로 클라이언트에 적용할 수 있다 (사용자가 버튼을 눌렀을 때만).
 
 프롬프트 담당자는 RUNE_SYSTEM만 수정하면 됩니다.
 """
@@ -160,3 +160,27 @@ def format_explanation(result):
     lines.append('룬 설명은 공식 자료 %s 기준입니다. 전체 이용자 승률 통계가 아니라 챔피언·상대·성향에 따른 추천입니다.'
                  % result.get('version', ''))
     return '\n\n'.join(lines)
+
+
+def apply_recommended_page(page, champion):
+    """추천 페이지를 클라이언트에 적용하고 결과를 화면 문장으로 돌려준다.
+
+    riot 모듈의 예외 문장은 사용자에게 보여도 되는 안내라서 그대로 전달한다.
+    """
+    from riot import RIFTFLOW_PAGE_PREFIX, ClientNotRunning, RiotApiError, apply_rune_page
+
+    if not page or len(page.get('selected_perk_ids') or []) != 9:
+        return {'applied': False, 'message': '적용할 추천 룬 페이지가 없습니다. 룬 추천을 먼저 받아 주세요.'}
+    name = ('%s %s' % (RIFTFLOW_PAGE_PREFIX, champion or '')).strip()
+    try:
+        applied = apply_rune_page(name, page['primary_style']['id'], page['secondary_style']['id'],
+                                  page['selected_perk_ids'])
+    except ClientNotRunning:
+        return {'applied': False, 'message': '롤 클라이언트가 실행 중이 아닙니다. 클라이언트를 켠 뒤 다시 적용해 주세요.'}
+    except RiotApiError as error:
+        return {'applied': False, 'message': str(error)}
+    verb = '교체하고' if applied.replaced else '새로 만들고'
+    message = "클라이언트에 '%s' 룬 페이지를 %s 현재 페이지로 선택했습니다." % (applied.name, verb)
+    if applied.is_valid is False:
+        message += ' 다만 클라이언트가 이 페이지를 유효하지 않다고 표시했습니다. 클라이언트에서 확인해 주세요.'
+    return {'applied': True, 'message': message, 'page_id': applied.page_id}

@@ -190,7 +190,21 @@ class ChampSelectSession:
 
 
 # ---------------------------------------------------------------------------
-# 9. 오류 표현: "호출 제한 / 검색 결과 없음"은 예외로 구분
+# 9. apply_rune_page 출력: 클라이언트에 적용한 룬 페이지
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class AppliedRunePage:
+    """RiftFlow가 클라이언트에 만들거나 교체한 룬 페이지. lcu_client.apply_rune_page()가 반환한다."""
+
+    page_id: int
+    name: str
+    replaced: bool                   # 이전 RiftFlow 페이지를 교체했으면 True, 새로 만들었으면 False
+    is_valid: Optional[bool] = None  # 클라이언트가 판정한 페이지 유효성. 응답에 없으면 None
+
+
+# ---------------------------------------------------------------------------
+# 10. 오류 표현: "호출 제한 / 검색 결과 없음"은 예외로 구분
 #    ("게임 미실행"은 위의 LiveMatchStatus.NOT_IN_GAME으로 이미 표현하므로 예외 아님)
 # ---------------------------------------------------------------------------
 
@@ -216,6 +230,17 @@ class MatchDataUnavailable(RiotApiError):
 
 class ClientNotRunning(RiotApiError):
     """라이엇 클라이언트가 꺼져있거나 아직 로그인 전일 때."""
+
+
+class RunePageSlotsFull(RiotApiError):
+    """룬 페이지 칸이 가득 차 있고 교체할 RiftFlow 페이지도 없을 때. 사용자 페이지는 지우지 않는다."""
+
+    def __init__(self, owned: Optional[int] = None):
+        self.owned = owned
+        super().__init__(
+            "룬 페이지 칸이 가득 찼습니다. 클라이언트에서 페이지 하나를 지우거나, "
+            "쓰지 않는 페이지 이름을 RiftFlow로 시작하게 바꾸면 그 페이지를 교체합니다."
+        )
 
 
 class RateLimitExceeded(RiotApiError):

@@ -19,7 +19,7 @@ from rag.gemini import DEFAULT_MODEL, generate
 from riot import (LiveMatchStatus, get_gameflow_phase, get_match_detail, get_current_summoner, get_live_state,
                   get_recent_matches_with_details, get_solo_rank, start_login_watcher)
 from game_phases.before_game.desktop import describe_session, answer_before_game, get_before_game_context
-from game_phases.before_game.runes import format_explanation, recommend_runes
+from game_phases.before_game.runes import apply_recommended_page, format_explanation, recommend_runes
 from game_phases.in_game.desktop import answer_in_game, describe_scoreboard, get_in_game_context
 from knowledge.before_game import champion_catalog, save_recent_matchups, personal_context, rune_catalog, named_rune_page, canonical_champion
 from knowledge.in_game import item_catalog
@@ -221,6 +221,7 @@ class Window(QMainWindow):
         self.before_game = BeforeGamePage()
         self.before_game.askRequested.connect(self.ask_before_game)
         self.before_game.runeRequested.connect(self.request_runes)
+        self.before_game.runeApplyRequested.connect(self.apply_runes)
         self.before_game.refreshRequested.connect(self.poll_champ_select)
         self.before_game.personalContextChanged.connect(self.update_personal_matchup)
         self.stack.addWidget(self.before_game)
@@ -379,6 +380,19 @@ class Window(QMainWindow):
             lambda result: self.show_rune_recommendation(result, champion),
             on_error=self.before_game.rune_view.show_message)
 
+    def apply_runes(self, request):
+        if self.jobs:
+            return
+        page, champion = request['page'], request['champion']
+        self.before_game.show_apply_status('롤 클라이언트에 룬 페이지를 적용하고 있습니다…')
+        self.status.setText('룬 페이지 적용 중')
+        self.start_job(lambda: apply_recommended_page(page, champion), self.show_rune_applied,
+                       on_error=self.before_game.show_apply_status)
+
+    def show_rune_applied(self, result):
+        self.before_game.show_apply_status(result['message'])
+        self.status.setText('룬 페이지 적용 완료' if result['applied'] else '룬 페이지 적용 실패')
+
     def show_rune_recommendation(self, result, champion):
         self.before_game.show_rune_result(result, champion)
         self.before_game.answer.setPlainText(format_explanation(result))
@@ -454,9 +468,7 @@ class Window(QMainWindow):
         self.sync.setEnabled(False)
         self.mode.setEnabled(False)
         self.out_game.set_busy(True)
-        self.before_game.send.setEnabled(False)
-        self.before_game.refresh.setEnabled(False)
-        self.before_game.rune_button.setEnabled(False)
+        self.before_game.set_busy(True)
         self.in_game.set_busy(True)
         job.result.connect(callback)
         job.failed.connect(self.failed)
@@ -472,9 +484,7 @@ class Window(QMainWindow):
         self.sync.setEnabled(True)
         self.mode.setEnabled(True)
         self.out_game.set_busy(False)
-        self.before_game.send.setEnabled(True)
-        self.before_game.refresh.setEnabled(True)
-        self.before_game.rune_button.setEnabled(True)
+        self.before_game.set_busy(False)
         self.in_game.set_busy(False)
         if not self.jobs and self.pending_riot_player is not None:
             player = self.pending_riot_player
