@@ -95,7 +95,16 @@ def champion_reference(db_path, champion, limit=1200):
 
 
 def save_recent_matchups(path, puuid, details):
-    """Keep compact, account-partitioned observations; repeated refreshes are idempotent."""
+    """경기 상세 원본에서 개인 상성 기록을 뽑아 저장한다 (직접 모드)."""
+    from riot.service import matchup_observation
+    save_observations(path, puuid, [o for o in (matchup_observation(d, puuid) for d in details) if o])
+
+
+def save_observations(path, puuid, observations):
+    """Keep compact, account-partitioned observations; repeated refreshes are idempotent.
+
+    observations는 riot.service.matchup_observation 형식이다. 서버 모드에서는 서버가 계산해 준다.
+    """
     account = hashlib.sha256(puuid.encode()).hexdigest()
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -105,27 +114,14 @@ def save_recent_matchups(path, puuid, details):
             champion TEXT NOT NULL, opponent TEXT, lane TEXT, won INTEGER NOT NULL,
             kills INTEGER, deaths INTEGER, assists INTEGER, rune_page TEXT,
             PRIMARY KEY(account, match_id))''')
-        for detail in details:
-            info = detail.get('info') or {}
-            if info.get('gameMode') != 'CLASSIC':
+        for o in observations:
+            if not o or not o.get('match_id') or not o.get('champion'):
                 continue
-            player = next((p for p in info.get('participants', []) if p.get('puuid') == puuid), None)
-            if player is None:
-                continue
-            lane = (player.get('teamPosition') or player.get('individualPosition') or '').upper()
-            opponents = [p for p in info['participants'] if p.get('teamId') != player.get('teamId')
-                         and (p.get('teamPosition') or p.get('individualPosition') or '').upper() == lane]
-            opponent = opponents[0].get('championName') if lane and len(opponents) == 1 else None
-            styles = (player.get('perks') or {}).get('styles') or []
-            page = [{'style': style.get('style'),
-                     'perks': [selection.get('perk') for selection in style.get('selections', [])]}
-                    for style in styles]
             db.execute('''INSERT OR REPLACE INTO personal_matchups
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                (account, detail.get('metadata', {}).get('matchId'), info.get('gameStartTimestamp'),
-                 player.get('championName'), opponent, lane, int(bool(player.get('win'))),
-                 player.get('kills'), player.get('deaths'), player.get('assists'),
-                 json.dumps(page) if page else None))
+                (account, o['match_id'], o.get('played_at'), o['champion'], o.get('opponent'), o.get('lane'),
+                 int(bool(o.get('won'))), o.get('kills'), o.get('deaths'), o.get('assists'),
+                 json.dumps(o['rune_page']) if o.get('rune_page') else None))
         db.commit()
 
 

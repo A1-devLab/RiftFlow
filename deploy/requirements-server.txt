@@ -1,0 +1,7 @@
+# 서버에 설치할 것만. 데스크톱 화면 라이브러리(PySide6)는 서버에 필요 없다.
+# riot 패키지가 import될 때 psutil·urllib3를 불러와서 함께 둔다.
+fastapi>=0.110
+uvicorn>=0.29
+requests>=2.31
+python-dotenv>=1.0
+psutil>=5.9

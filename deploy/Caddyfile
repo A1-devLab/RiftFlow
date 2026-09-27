@@ -1,0 +1,10 @@
+# /etc/caddy/Caddyfile. DOMAIN을 DuckDNS 주소로 바꾼다 (예: riftflow-team.duckdns.org).
+# Caddy가 Let's Encrypt 인증서를 자동으로 받아 HTTPS를 처리하고, 요청을 RiftFlow 서버로 넘긴다.
+DOMAIN {
+	encode gzip
+	request_body {
+		max_size 64KB
+	}
+	header -Server
+	reverse_proxy 127.0.0.1:8787
+}

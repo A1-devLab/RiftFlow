@@ -201,9 +201,12 @@ python -m unittest discover -s tests/integration -v
 ### 관련 문서
 
 - `docs/architecture.md`: 전체 구조
+- `docs/server-architecture.md`: 공개 서비스를 위한 서버 구조 설계안 (키 보관, 캐시, 사용량 제한)
+- `docs/server-deploy.md`: 미니 PC 서버 배포 절차와 운영 명령
 - `docs/interfaces.md`: 모듈 간 데이터 형식
 - `docs/game-phases.md`: 게임 단계별 폴더, 프롬프트 수정 위치, 화면 자동 전환
-- `docs/riot-application.md`: 라이엇 API 키 신청 안내
+- `docs/riot-application.md`: 라이엇 API 키 신청 안내 (Personal 등록 기록)
+- `docs/riot-production-application.md`: 공개 서비스용 Production 키 신청서 초안과 제출 전 체크리스트
 - `docs/ui/README.md`: 화면 설계 자료
 
 ## 고지
