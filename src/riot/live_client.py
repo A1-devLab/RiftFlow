@@ -106,6 +106,18 @@ def is_in_game() -> bool:
     return _get("/gamestats") is not None
 
 
+def get_game_info() -> Optional[dict]:
+    """진행 중인 게임의 모드와 맵. {'game_mode': 'ARAM', 'map_number': 12} 형식, 게임 중이 아니면 None.
+
+    아이템 추천이 모드(협곡·칼바람·아레나)에 맞는 상점 아이템을 쓰는 데 필요하다.
+    """
+    data = _get("/gamestats")
+    if not isinstance(data, dict):
+        return None
+    number = data.get("mapNumber")
+    return {"game_mode": data.get("gameMode") or None, "map_number": number if isinstance(number, int) else None}
+
+
 def get_game_time() -> Optional[float]:
     """게임 시작 후 경과 시간(초)을 반환한다. 게임 중이 아니면 None."""
     data = _get("/gamestats")

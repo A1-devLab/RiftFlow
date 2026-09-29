@@ -61,6 +61,8 @@ def live_view(view):
     me = _entries([view.get('me')], LIVE_ENTRY_KEYS, 1, _items)
     gold = view.get('team_gold') if isinstance(view.get('team_gold'), dict) else None
     return {'in_game': True, 'clock': text(view.get('clock'), 8), 'elapsed_seconds': _number(view.get('elapsed_seconds')),
+            'game_mode': text(view.get('game_mode'), 20), 'map_number': _number(view.get('map_number')),
+            'mode_name': text(view.get('mode_name'), 30),
             'perspective_known': bool(view.get('perspective_known')), 'my_team': text(view.get('my_team'), 8),
             'me': me[0] if me else None,
             'allies': _entries(view.get('allies'), LIVE_ENTRY_KEYS, 5, _items),

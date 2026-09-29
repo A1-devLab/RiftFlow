@@ -264,8 +264,9 @@ class InGamePage(QWidget):
     def show_view(self, view):
         self.view = view
         self.clock.setText(view.get('clock') or '--:--')
+        mode = ' · %s' % view['mode_name'] if view.get('mode_name') else ''
         if view.get('perspective_known'):
-            self.state.setText('게임 연결됨 · 2~3초 간격으로 갱신합니다.')
+            self.state.setText('게임 연결됨%s · 2~3초 간격으로 갱신합니다.' % mode)
         else:
             self.state.setText('게임 연결됨 · 내 소환사를 스코어보드에서 찾지 못해 블루팀을 아군으로 표시합니다.')
         gold = view.get('team_gold')

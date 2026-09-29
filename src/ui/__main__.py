@@ -314,7 +314,8 @@ class Window(QMainWindow):
             work = lambda: coach_in_game(server, request['view'], request['question'])
         else:
             work = lambda: answer_in_game(path, request['view'], request['question'],
-                                          generate=lambda prompt: generate(prompt, model=model, retries=0))
+                                          generate=lambda prompt, **options: generate(prompt, model=model,
+                                                                                       retries=0, **options))
         self.start_job(
             work,
             self.show_in_game_answer, on_error=self.in_game.answer.setPlainText)

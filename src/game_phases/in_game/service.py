@@ -2,7 +2,7 @@
 from pathlib import Path
 
 from game_phases.common import ask, gemini_generator, show
-from riot import get_active_player_name, get_live_state, get_scoreboard, get_team_gold_totals
+from riot import get_active_player_name, get_game_info, get_live_state, get_scoreboard, get_team_gold_totals
 
 
 def get_in_game_context(state=None):
@@ -13,6 +13,7 @@ def get_in_game_context(state=None):
         "scoreboard": scoreboard,
         "team_gold": get_team_gold_totals(scoreboard) if scoreboard is not None else None,
         "active_player_name": get_active_player_name() if scoreboard is not None else None,
+        "game": get_game_info() if scoreboard is not None else None,
     }
 
 
