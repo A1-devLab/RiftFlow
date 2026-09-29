@@ -20,7 +20,8 @@ ITEM_SYSTEM = """너는 리그 오브 레전드 게임 중 아이템 코치다. 
 - candidates에 있는 item_id만 고른다. 후보에 없는 아이템은 이번 패치 협곡 상점에 없거나 지금 상황에 맞지 않는 것이다.
 - 2개나 3개를 고른다. 서로 성격이 다른 선택지(예: 공격 강화, 생존, 상대 대응)를 섞어 사용자가 고르게 한다.
 - 이유는 후보의 공식 효과(effect)와 지금 상황(상대 조합, 내 상태)을 이어서 한 문장으로 쓴다. 이유에는 숫자 ID를 쓰지 않는다.
-- 골드는 보유 아이템 가격 합계 추정치다. 지금 당장 살 수 있다고 단정하지 않는다.
+- 지금 살 수 있는지는 코드가 계산해 각 후보의 buy_now 값으로 준다. 이유에 '바로 살 수 있다', '골드가 충분하다' 같은 구매 가능 여부를 직접 쓰지 않는다. 화면이 buy_now 결과를 따로 보여 준다.
+- item_value_estimate는 이미 산 아이템 가격 합계라 가진 돈이 아니다.
 - 상대 조합은 Data Dragon 역할 태그와 소개 지표일 뿐 실제 딜 비율이 아니다.
 - game_mode를 고려한다. 칼바람 나락은 한 길에서 계속 싸우고 죽기 전에는 귀환해 상점을 쓸 수 없다. 아레나는 2:2 라운드 대결이다. 후보는 이미 그 모드 상점 기준으로 골라져 있다.
 - 승률·통계는 입력에 없으므로 말하지 않는다.
@@ -81,6 +82,27 @@ def _is_boots(item):
     return 'Boots' in item['tags']
 
 
+def remaining_cost(item, items, me):
+    """가진 하위 아이템을 반영한 남은 비용. 바로 아래 재료만 빼는 근사값이다(재료의 재료는 보지 않음)."""
+    owned = [entry['id'] for entry in (me or {}).get('items', [])]
+    parts = list(item['from'])
+    saved = 0
+    for owned_id in owned:
+        if str(owned_id) in parts and owned_id in items:
+            parts.remove(str(owned_id))
+            saved += items[owned_id]['gold']
+    return max(0, item['gold'] - saved)
+
+
+def buy_label(option, current_gold):
+    """구매 가능 여부 표시. 모델이 아니라 코드가 계산한다."""
+    if current_gold is None:
+        return '보유 골드 확인 불가'
+    if current_gold >= option['remaining_cost']:
+        return '지금 구매 가능'
+    return '%s골드 부족' % f"{option['remaining_cost'] - current_gold:,}"
+
+
 def candidates(items, me, composition, my_rating):
     """코드가 고르는 구매 후보. 이미 가진 아이템과 같은 이름의 중복은 뺀다."""
     owned_ids = {entry['id'] for entry in (me or {}).get('items', [])}
@@ -100,7 +122,11 @@ def candidates(items, me, composition, my_rating):
         if item['id'] in owned_ids or item['name'] in owned_names or item['name'] in seen:
             return
         seen.add(item['name'])
+        remaining = remaining_cost(item, items, me)
+        gold = (me or {}).get('current_gold')
         picked.append({'item_id': item['id'], 'name': item['name'], 'price': item['gold'], 'role': role,
+                       'remaining_cost': remaining,
+                       'buy_now': None if gold is None else gold >= remaining,
                        'effect': item['effect']})
 
     completed = [i for i in items.values() if not i['into'] and i['gold'] >= 2000 and not _is_boots(i)]
@@ -138,19 +164,21 @@ def validate(answer, pool):
         else:
             used.add(item_id)
             options.append({'item_id': item_id, 'name': by_id[item_id]['name'], 'price': by_id[item_id]['price'],
+                            'remaining_cost': by_id[item_id]['remaining_cost'],
                             'role': by_id[item_id]['role'], 'reason': str(option.get('reason') or '').strip()})
     if not 2 <= len(options) <= 3:
         errors.append('candidates에서 서로 다른 아이템 2개나 3개를 골라야 합니다 (지금 %d개).' % len(options))
     return (options, []) if not errors else (None, errors)
 
 
-def format_options(summary, options, version, mode_name='소환사의 협곡'):
+def format_options(summary, options, version, mode_name='소환사의 협곡', current_gold=None):
     lines = [summary] if summary else []
     for number, option in enumerate(options, 1):
-        lines.append('%d. %s (%s골드, %s): %s' % (number, option['name'], f"{option['price']:,}", option['role'],
-                                               option['reason']))
-    lines.append('아이템 정보는 공식 자료 %s 기준 %s 상점 아이템입니다. 골드는 추정치라 지금 살 수 있는지는 상점에서 확인하세요.'
-                 % (version, mode_name))
+        lines.append('%d. %s (%s골드, %s · %s): %s' % (number, option['name'], f"{option['price']:,}", option['role'],
+                                                    buy_label(option, current_gold), option['reason']))
+    gold_line = ('내 보유 골드 %s 기준입니다(가진 하위 아이템 반영).' % f'{current_gold:,}' if current_gold is not None
+                 else '보유 골드를 읽지 못해 구매 가능 여부는 표시하지 않았습니다.')
+    lines.append('아이템 정보는 공식 자료 %s 기준 %s 상점 아이템입니다. %s' % (version, mode_name, gold_line))
     return '\n\n'.join(lines)
 
 
@@ -192,7 +220,8 @@ def recommend_items(db_path, view, question, *, generate, prompt_player):
         options, errors = validate(answer, pool)
         if options:
             version = next(iter(items.values()))['version']
-            return {'answer': format_options(str(answer.get('summary') or '').strip(), options, version, mode_name),
+            return {'answer': format_options(str(answer.get('summary') or '').strip(), options, version, mode_name,
+                                             (me or {}).get('current_gold')),
                     'options': options, 'message': None, 'generated': True}
     return {'answer': None, 'generated': False,
             'message': '모델이 후보에 맞는 아이템 선택지를 만들지 못했습니다. 잠시 뒤 다시 시도해 주세요.'}

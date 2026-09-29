@@ -6,7 +6,7 @@
 
 PICK_ENTRY_KEYS = ('champion', 'id', 'position', 'locked', 'selected', 'hovering')
 LIVE_ENTRY_KEYS = ('champion', 'team', 'position', 'position_name', 'level', 'kills', 'deaths', 'assists', 'kda',
-                   'cs', 'cs_per_min', 'estimated_gold', 'is_dead', 'respawn_timer', 'is_me')
+                   'cs', 'cs_per_min', 'estimated_gold', 'current_gold', 'is_dead', 'respawn_timer', 'is_me')
 MESSAGE_LIMIT = 1000
 
 
@@ -69,6 +69,15 @@ def live_view(view):
             'enemies': _entries(view.get('enemies'), LIVE_ENTRY_KEYS, 5, _items),
             'team_gold': ({key: _number(gold.get(key)) for key in ('ally', 'enemy', 'diff')} | {'note': text(gold.get('note'), 200)}
                           if gold else None)}
+
+
+def history(messages):
+    """최근 대화 (최대 8개, 한 메시지 1,200자). 역할은 user/assistant만."""
+    result = []
+    for message in (messages or [])[-8:] if isinstance(messages, list) else []:
+        if isinstance(message, dict) and message.get('role') in ('user', 'assistant') and message.get('text'):
+            result.append({'role': message['role'], 'text': text(message['text'], 1200)})
+    return result
 
 
 def user_requests(messages):

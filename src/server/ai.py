@@ -53,15 +53,18 @@ class AiService:
                                     generate=self.generate, champion=payloads.text(body.get('champion')),
                                     opponent=payloads.text(body.get('opponent')),
                                     user_requests=payloads.user_requests(body.get('user_requests')),
-                                    observations=payloads.observations(body.get('observations')))
+                                    observations=payloads.observations(body.get('observations')),
+                                    history=payloads.history(body.get('history')))
         return result, 1
 
     def in_game(self, body):
         result = answer_in_game(self.knowledge_path, payloads.live_view(body.get('view')),
-                                payloads.text(body.get('question'), 1000), generate=self.generate)
+                                payloads.text(body.get('question'), 1000), generate=self.generate,
+                                history=payloads.history(body.get('history')))
         return result, 1
 
     def general(self, body):
         result = ask_general(self.knowledge_path, payloads.text(body.get('question'), 1000), generate=self.generate,
-                             context=payloads.general_context(body.get('context')))
+                             context=payloads.general_context(body.get('context')),
+                             history=payloads.history(body.get('history')))
         return {key: result.get(key) for key in GENERAL_KEYS}, 1

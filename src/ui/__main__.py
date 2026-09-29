@@ -2,13 +2,14 @@
 import argparse
 import html
 import os
+from datetime import datetime
 import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QFrame, QHBoxLayout, QLabel,
+    QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QMessageBox,
     QLineEdit, QMainWindow, QPushButton,
     QStackedWidget, QTextBrowser, QVBoxLayout, QWidget,
 )
@@ -28,6 +29,7 @@ from .pages.before_game import BeforeGamePage
 from .pages.in_game import InGamePage
 from .match_detail import MatchDetailDialog
 from .services import ask_general, create_demo, profile_context, sync_database
+from .chat_history import SCREEN_NAMES, ChatHistory
 from knowledge.before_game import recent_rune_pages
 
 STYLE = """
@@ -138,6 +140,10 @@ class Window(QMainWindow):
         self.match_cache = {}
         self.login_watcher = None
         self.personal_path = self.data_dir / "personal_matches.db"
+        # AI 대화 기록은 이 PC에만 저장한다. 일반 질문은 앱을 다시 켜도 마지막 대화를 이어 가고,
+        # 픽창·인게임 대화는 픽창·게임마다 새로 시작한다.
+        self.chats = ChatHistory(self.data_dir / "chat_history.db")
+        self.chat_ids = {'general': self.chats.latest('general'), 'pick': None, 'in_game': None}
         self.poll_job = None
         self.champ_session_active = False
         self.phase = 'idle'
@@ -188,6 +194,10 @@ class Window(QMainWindow):
         self.make_chat()
         self.make_settings()
         self.navigate(HOME)
+        self.refresh_chat_list()
+        self.render_general()
+        if self.chat_ids['general']:
+            self.out_game.load_history(self.chats.messages(self.chat_ids['general']))
         try:
             has_live_data = self.live_path.exists() and bool(get_documents(db_path=self.live_path))
         except Exception:
@@ -261,13 +271,14 @@ class Window(QMainWindow):
         phase, previous = payload['phase'], self.phase
         self.phase = phase
         if phase == 'champ_select' and previous != 'champ_select':
-            # 새 픽창: 채팅으로 말한 성향과 적용 기록을 새로 시작한다.
+            # 새 픽창: 채팅으로 말한 성향, 적용 기록, 픽창 대화를 새로 시작한다.
             self.before_game.reset_conversation()
             self.rune_applied_page = None
-        if phase == 'champ_select' and previous != 'champ_select':
-            # 새 픽창: 채팅으로 말한 성향과 적용 기록을 새로 시작한다.
-            self.before_game.reset_conversation()
-            self.rune_applied_page = None
+            self.chat_ids['pick'] = None
+            self.before_game.answer.setPlainText('픽창에서 궁금한 점을 물어보세요. 이번 픽창의 대화는 이어서 기억합니다.')
+        if phase in ('loading', 'in_game') and previous not in ('loading', 'in_game'):
+            self.chat_ids['in_game'] = None       # 새 게임: 인게임 대화를 새로 시작
+            self.in_game.answer.setPlainText('게임 중 궁금한 점을 물어보세요. 이번 게임의 대화는 이어서 기억합니다.')
         if phase == 'champ_select':
             self.on_champ_select((payload['session'], payload['catalog']))
         else:
@@ -308,21 +319,43 @@ class Window(QMainWindow):
         model = self.model.text().strip() or DEFAULT_MODEL
         path = self.db_path
         self.in_game.answer.setPlainText('현재 스코어보드와 공식 자료를 확인하고 있습니다…')
-        server = self.server()
+        server, history, question = self.server(), self.chat_context('in_game'), request['question']
         if server is not None:
             from api_client.coach import coach_in_game
-            work = lambda: coach_in_game(server, request['view'], request['question'])
+            work = lambda: coach_in_game(server, request['view'], question, history=history)
         else:
-            work = lambda: answer_in_game(path, request['view'], request['question'],
+            work = lambda: answer_in_game(path, request['view'], question, history=history,
                                           generate=lambda prompt, **options: generate(prompt, model=model,
                                                                                        retries=0, **options))
         self.start_job(
             work,
-            self.show_in_game_answer, on_error=self.in_game.answer.setPlainText)
+            lambda result: self.show_in_game_answer(result, question), on_error=self.in_game.answer.setPlainText)
 
-    def show_in_game_answer(self, result):
-        self.in_game.answer.setPlainText(result['answer'] or result['message'] or '답변을 받지 못했습니다.')
+    def show_in_game_answer(self, result, question=None):
+        self.record_chat('in_game', question, result.get('answer') or result.get('message'))
+        self.show_transcript(self.in_game.answer, 'in_game')
         self.status.setText('인게임 답변 완료' if result['generated'] else '인게임 자료 확인 필요')
+
+    # --- AI 대화 기록
+    def chat_context(self, screen):
+        """모델에 넘길 이 화면의 최근 대화."""
+        return self.chats.context(self.chat_ids.get(screen))
+
+    def record_chat(self, screen, question, answer):
+        if not self.chat_ids.get(screen):
+            self.chat_ids[screen] = ChatHistory.new_id()
+        if question:
+            self.chats.add(self.chat_ids[screen], screen, 'user', question)
+        if answer:
+            self.chats.add(self.chat_ids[screen], screen, 'assistant', answer)
+        self.refresh_chat_list()
+
+    def show_transcript(self, widget, screen):
+        """픽창·인게임 답변 칸에 이번 픽창·게임의 대화 전체를 보여 준다 (최신이 아래)."""
+        messages = self.chats.messages(self.chat_ids[screen]) if self.chat_ids.get(screen) else []
+        widget.setPlainText('\n\n'.join(('나: ' if m['role'] == 'user' else 'AI: ') + m['text'] for m in messages))
+        bar = widget.verticalScrollBar()
+        bar.setValue(bar.maximum())
 
     def finish_champ_poll(self):
         job = self.poll_job
@@ -407,7 +440,7 @@ class Window(QMainWindow):
         model = self.model.text().strip() or DEFAULT_MODEL
         puuid = self.riot_context['player'].puuid if self.riot_context else None
         self.before_game.answer.setPlainText('확정된 픽과 공식 자료를 확인하고 있습니다…')
-        server, path = self.server(), self.db_path
+        server, path, history = self.server(), self.db_path, self.chat_context('pick')
         if server is not None:
             # 개인 상성 기록은 이 PC에서 계산해 요약만 보낸다 (PUUID는 보내지 않음).
             from api_client.coach import coach_pick
@@ -416,16 +449,16 @@ class Window(QMainWindow):
                                              canonical_champion(path, request['opponent']), lane) if puuid else None)
             work = lambda: coach_pick(server, request['view'], request['question'], champion=request['champion'],
                                       opponent=request['opponent'], user_requests=request['user_requests'],
-                                      observations=observations)
+                                      observations=observations, history=history)
         else:
             work = lambda: answer_before_game(
                 path, self.personal_path, puuid, request['view'], request['question'],
                 generate=lambda prompt: generate(prompt, model=model, retries=0),
                 champion=request['champion'], opponent=request['opponent'],
-                user_requests=request['user_requests'])
+                user_requests=request['user_requests'], history=history)
         self.start_job(
             work,
-            self.show_before_game_answer,
+            lambda result: self.show_before_game_answer(result, request['question']),
         )
 
     def request_runes(self, request):
@@ -442,6 +475,8 @@ class Window(QMainWindow):
         puuid = self.riot_context['player'].puuid if self.riot_context else None
         champion, key = request['champion'], self.rune_key(request)
         self.rune_shown_key = key
+        if request.get('question'):
+            self.record_chat('pick', request['question'], None)
         self.before_game.rune_view.show_message('챔피언과 상대 조합, 공식 룬 설명을 바탕으로 룬을 고르고 있습니다…')
         self.status.setText('룬 추천 중')
         server = self.server()
@@ -487,7 +522,8 @@ class Window(QMainWindow):
         if result.get('page') and key is not None:
             self.rune_cache[key] = result
         self.before_game.show_rune_result(result, champion)
-        self.before_game.answer.setPlainText(format_explanation(result))
+        self.record_chat('pick', None, '[추천 룬] ' + format_explanation(result))
+        self.show_transcript(self.before_game.answer, 'pick')
         self.status.setText('룬 추천 완료' if result['generated'] else '룬 추천 확인 필요')
         # 픽창에서는 추천을 바로 클라이언트에 적용한다. 이미 적용한 조건이면 다시 쓰지 않는다.
         if (result.get('page') and key is not None and self.phase == 'champ_select'
@@ -507,12 +543,27 @@ class Window(QMainWindow):
             return
         self.apply_runes(request)
 
-    def show_before_game_answer(self, result):
-        self.before_game.answer.setPlainText(result['answer'] or result['message'] or '답변을 받지 못했습니다.')
+    def show_before_game_answer(self, result, question=None):
+        self.record_chat('pick', question, result.get('answer') or result.get('message') or '답변을 받지 못했습니다.')
+        self.show_transcript(self.before_game.answer, 'pick')
         self.status.setText('픽창 답변 완료' if result['generated'] else '픽창 자료 확인 필요')
 
     def make_chat(self):
-        layout = self.page('AI에게 질문', '롤 전적 분석, 챔피언 추천, 연습 방법과 패치에 대해 질문하세요.')
+        layout = self.page('AI에게 질문', '롤 전적 분석, 챔피언 추천, 연습 방법과 패치에 대해 질문하세요. '
+                                          '대화는 이 PC에만 저장되고, 이어지는 질문은 앞 대화를 기억합니다.')
+        tools = QHBoxLayout()
+        self.chat_list = QComboBox()
+        self.chat_list.setMinimumWidth(420)
+        self.chat_list.activated.connect(self.open_chat)
+        tools.addWidget(label('지난 대화', 'muted'))
+        tools.addWidget(self.chat_list, 1)
+        new_chat = QPushButton('새 대화')
+        new_chat.clicked.connect(self.new_chat)
+        clear_chats = QPushButton('기록 지우기')
+        clear_chats.clicked.connect(self.clear_chats)
+        tools.addWidget(new_chat)
+        tools.addWidget(clear_chats)
+        layout.addLayout(tools)
         self.reply = browser()
         layout.addWidget(self.reply, 1)
         form = QHBoxLayout()
@@ -632,18 +683,25 @@ class Window(QMainWindow):
         model = self.model.text().strip() or DEFAULT_MODEL
         path, profile = self.db_path, self.riot_context
         self.status.setText('AI 답변을 준비하고 있습니다.')
-        self.start_job(lambda: self.general_answer(path, question, profile, model), self.show_out_game_answer,
-        )
+        history = self.chat_context('general')
+        self.start_job(lambda: self.general_answer(path, question, profile, model, history),
+                       lambda result: self.show_out_game_answer(result, question))
 
-    def general_answer(self, path, question, profile, model):
+    def general_answer(self, path, question, profile, model, history=None):
         server = self.server()
         if server is not None:
             from api_client.coach import coach_general
-            return coach_general(server, question, profile_context(profile))
-        return ask_general(path, question, profile=profile,
+            return coach_general(server, question, profile_context(profile), history=history)
+        return ask_general(path, question, profile=profile, history=history,
                            generate=lambda prompt: generate(prompt, model=model, retries=0))
 
-    def show_out_game_answer(self, result):
+    @staticmethod
+    def answer_text(result):
+        return result.get('answer') or result.get('message') or result.get('error')
+
+    def show_out_game_answer(self, result, question=None):
+        self.record_chat('general', question, self.answer_text(result))
+        self.render_general()
         self.out_game.show_answer(result)
         self.status.setText('완료 · ' + ('Gemini 답변' if result['generated'] else '공식 자료 검색'))
 
@@ -704,22 +762,80 @@ class Window(QMainWindow):
             self.reply.setPlainText('AI 답변에 필요한 Gemini API 키가 없습니다. .env 파일에 GEMINI_API_KEY를 설정한 뒤 앱을 다시 실행하세요.')
             return
         path, profile = self.db_path, self.riot_context
-        self.reply.setPlainText('AI 답변을 준비하고 있습니다…\n응답은 최대 약 60초 걸릴 수 있습니다.')
+        self.render_general(pending=question)
         self.status.setText('연결된 전적과 질문을 바탕으로 답변 중' if profile else '질문을 바탕으로 답변 중')
-        self.start_job(lambda: self.general_answer(path, question, profile, model), self.show_answer)
+        history = self.chat_context('general')
+        self.question.clear()
+        self.start_job(lambda: self.general_answer(path, question, profile, model, history),
+                       lambda result: self.show_answer(result, question))
 
-    def show_answer(self, result):
+    def show_answer(self, result, question=None):
+        text = self.answer_text(result) or ('질문에 맞는 자료를 확인하지 못했습니다.'
+                                            if result.get('status') == 'insufficient_evidence' else '답변을 받지 못했습니다.')
+        self.record_chat('general', question, text)
+        self.out_game.add_exchange(question, text)      # 전적 화면 채팅에도 같은 대화가 보이게
+        self.render_general()
+        self.status.setText('완료 · 대화는 이 PC에만 저장됩니다. · ' + ('Gemini 답변' if result['generated'] else '자료 검색 / 상태 안내'))
+
+    def render_general(self, pending=None, conversation_id=None):
+        """AI에게 질문 화면에 대화 전체를 보여 준다. pending은 아직 답을 기다리는 질문."""
         esc = html.escape
-        if result['answer']:
-            body = '<h2>AI 답변</h2><p style="white-space:pre-wrap">%s</p>' % esc(result['answer'])
-        elif result['status'] == 'insufficient_evidence':
-            body = '<h2>참고 자료가 부족합니다</h2><p>%s</p>' % esc(result['message'] or '질문에 맞는 자료를 확인하지 못했습니다.')
-        elif result['message']:
-            body = '<h2>안내</h2><p>%s</p>' % esc(result['message'])
-        else:
-            body = '<h2>관련 근거를 찾았어요</h2><p>아래는 검색한 자료입니다. AI가 생성한 답변이 아닙니다.</p>'
-        self.reply.setHtml(body)
-        self.status.setText('완료 · 이번 대화는 저장하지 않습니다. · ' + ('Gemini 답변' if result['generated'] else '자료 검색 / 상태 안내'))
+        conversation_id = conversation_id or self.chat_ids.get('general')
+        messages = self.chats.messages(conversation_id) if conversation_id else []
+        blocks = []
+        for message in messages + ([{'role': 'user', 'text': pending}] if pending else []):
+            who, color = ('나', '#9dc5ff') if message['role'] == 'user' else ('AI', '#72e2c7')
+            blocks.append('<p style="margin-top:14px"><b style="color:%s">%s</b></p><p style="white-space:pre-wrap">%s</p>'
+                          % (color, who, esc(message['text'])))
+        if pending:
+            blocks.append('<p style="color:#97a8bd">AI 답변을 준비하고 있습니다… 최대 약 60초 걸릴 수 있습니다.</p>')
+        self.reply.setHtml(''.join(blocks) or '<p style="color:#97a8bd">아직 대화가 없습니다. 아래에 질문을 입력하세요. '
+                                              '대화는 이 PC에만 저장되고, 이어지는 질문은 앞 대화를 기억해서 답합니다.</p>')
+        bar = self.reply.verticalScrollBar()
+        bar.setValue(bar.maximum())
+
+    def refresh_chat_list(self):
+        if not hasattr(self, 'chat_list'):
+            return
+        self.chat_list.blockSignals(True)
+        self.chat_list.clear()
+        self.chat_list.addItem('현재 대화', None)
+        for chat in self.chats.conversations():
+            when = datetime.fromtimestamp(chat['updated_at']).strftime('%m/%d %H:%M')
+            self.chat_list.addItem('[%s] %s · %s' % (SCREEN_NAMES.get(chat['screen'], chat['screen']), chat['title'], when),
+                                   (chat['id'], chat['screen']))
+        self.chat_list.blockSignals(False)
+
+    def open_chat(self, index):
+        data = self.chat_list.itemData(index)
+        if not data:
+            self.render_general()
+            return
+        conversation_id, screen = data
+        if screen == 'general':
+            self.chat_ids['general'] = conversation_id       # 지난 일반 대화를 이어서 질문할 수 있다
+            self.out_game.load_history(self.chats.messages(conversation_id))
+        self.render_general(conversation_id=conversation_id)
+        if screen != 'general':
+            self.status.setText('%s 대화 기록입니다. 여기서 질문하면 일반 대화로 이어집니다.' % SCREEN_NAMES.get(screen, screen))
+
+    def new_chat(self):
+        self.chat_ids['general'] = None
+        self.out_game.load_history([])
+        self.chat_list.setCurrentIndex(0)
+        self.render_general()
+        self.status.setText('새 대화를 시작했습니다.')
+
+    def clear_chats(self):
+        answer = QMessageBox.question(self, '대화 기록 지우기', '이 PC에 저장된 AI 대화 기록을 모두 지울까요? 되돌릴 수 없습니다.')
+        if answer != QMessageBox.Yes:
+            return
+        self.chats.clear()
+        self.chat_ids = {'general': None, 'pick': None, 'in_game': None}
+        self.out_game.load_history([])
+        self.refresh_chat_list()
+        self.render_general()
+        self.status.setText('대화 기록을 모두 지웠습니다.')
 
     def sync_data(self):
         if self.jobs:
