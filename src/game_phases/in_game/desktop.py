@@ -15,7 +15,8 @@ POSITIONS = ('TOP', 'JUNGLE', 'MIDDLE', 'BOTTOM', 'UTILITY', 'NONE')
 POSITION_NAMES = {'TOP': '탑', 'JUNGLE': '정글', 'MIDDLE': '미드', 'BOTTOM': '원딜',
                   'UTILITY': '서폿', 'NONE': '미정'}
 ITEM_QUESTION_WORDS = ('아이템', '템', '빌드', '살까', '사야', '뭐사', '구매', '코어')
-GOLD_NOTE = '보유 아이템 가격 합계로 낸 추정치. 아직 쓰지 않은 골드는 빠져 있어 실제보다 적거나 같다.'
+GOLD_NOTE = ('보유 아이템 가격 합계(이미 쓴 골드)로 낸 추정치. 가진 돈이 아니며 아직 쓰지 않은 골드는 빠져 있다. '
+             '지금 무엇을 살 수 있는지는 이 값으로 판단할 수 없다.')
 RECOMMEND_QUESTION = '지금 상황에서 다음에 살 아이템을 추천해줘'
 
 __all__ = ['get_in_game_context', 'describe_scoreboard', 'answer_in_game', 'is_item_question',
@@ -56,6 +57,7 @@ def _entry(player, catalog, minutes, is_me):
             'cs': int(player.cs or 0),
             'cs_per_min': round((player.cs or 0) / minutes, 1) if minutes >= 1 else None,
             'items': items, 'estimated_gold': int(player.estimated_gold or 0),
+            'current_gold': None,
             'is_dead': player.is_dead, 'respawn_timer': round(player.respawn_timer or 0),
             'is_me': is_me}
 
@@ -88,6 +90,8 @@ def describe_scoreboard(context, catalog):
         team_gold = {'ally': int(ally_gold), 'enemy': int(enemy_gold),
                      'diff': int(ally_gold - enemy_gold), 'note': GOLD_NOTE}
     me = next((e for e in entries if e['is_me']), None)
+    if me is not None and isinstance(context.get('current_gold'), int):
+        me['current_gold'] = context['current_gold']     # 나만 정확한 보유 골드를 안다
     from game_phases.before_game.desktop import MODE_NAMES
     game = context.get('game') or {}
     mode = game.get('game_mode')
@@ -104,10 +108,17 @@ def is_item_question(question):
 
 
 def prompt_player(entry):
-    """프롬프트에는 아이템 이름만 넣는다 (숫자 ID 비노출)."""
-    data = {key: entry[key] for key in ('champion', 'position_name', 'level', 'kda', 'cs',
-                                        'cs_per_min', 'estimated_gold', 'is_dead', 'respawn_timer')}
-    data['items'] = [item['name'] for item in entry['items']]
+    """프롬프트에는 아이템 이름만 넣는다 (숫자 ID 비노출).
+
+    estimated_gold를 그대로 보내면 모델이 '가진 돈'으로 읽고 "지금 살 수 있다"고 말했다.
+    그래서 이름을 item_value_estimate(이미 산 아이템 가격 합)로 바꾸고, 실제 보유 골드는 나만 current_gold로 따로 보낸다.
+    """
+    data = {key: entry.get(key) for key in ('champion', 'position_name', 'level', 'kda', 'cs',
+                                            'cs_per_min', 'is_dead', 'respawn_timer')}
+    data['item_value_estimate'] = entry.get('estimated_gold')
+    if entry.get('current_gold') is not None:
+        data['current_gold'] = entry['current_gold']
+    data['items'] = [item['name'] for item in entry.get('items') or []]
     return data
 
 
@@ -132,7 +143,7 @@ def _item_hints(me, composition, profiles):
     return ' '.join(hints)
 
 
-def answer_in_game(db_path, view, question, *, generate):
+def answer_in_game(db_path, view, question, *, generate, history=None):
     """확인된 스코어보드와 공식 아이템·챔피언 문서만으로 답한다. 시야·쿨타임은 다루지 않는다."""
     from .prompt import SYSTEM
 
@@ -183,6 +194,7 @@ def answer_in_game(db_path, view, question, *, generate):
                'enemy_composition': composition,
                'official_items': items, 'official_champions': champions[:6],
                'game_mode': view.get('mode_name') or view.get('game_mode'),
+               'conversation': history or [],
                'current_patch_names': current_names(db_path, item_map_for(view.get('game_mode'), view.get('map_number')))}
     prompt = {'system': SYSTEM, 'user': json.dumps(payload, ensure_ascii=False)}
     try:

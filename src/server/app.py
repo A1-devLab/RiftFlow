@@ -44,16 +44,19 @@ class PickBody(BaseModel):
     view: dict = Field(default_factory=dict)
     user_requests: List[str] = Field(default_factory=list, max_length=5)
     observations: Optional[dict] = None
+    history: List[dict] = Field(default_factory=list, max_length=8)
 
 
 class InGameBody(BaseModel):
     question: str = Field(min_length=1, max_length=1000)
     view: dict = Field(default_factory=dict)
+    history: List[dict] = Field(default_factory=list, max_length=8)
 
 
 class GeneralBody(BaseModel):
     question: str = Field(min_length=1, max_length=1000)
     context: Optional[dict] = None
+    history: List[dict] = Field(default_factory=list, max_length=8)
 
 
 class ApiError(Exception):

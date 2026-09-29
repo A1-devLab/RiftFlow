@@ -58,7 +58,7 @@ def opponent_for_lane(view):
 
 
 def answer_before_game(db_path, personal_db_path, puuid, view, question, *, generate,
-                       champion=None, opponent=None, user_requests=None, observations=None):
+                       champion=None, opponent=None, user_requests=None, observations=None, history=None):
     # observations를 주면 개인 기록 파일 대신 그 값을 쓴다 (서버: 앱이 계산해 보낸 개인 상성 기록).
     """Ground verified game facts in DB and personal observations; never invent matchup rates."""
     champion = (champion or (view.get('mine') or {}).get('champion') or '').strip()
@@ -97,6 +97,7 @@ def answer_before_game(db_path, personal_db_path, puuid, view, question, *, gene
                'earlier_messages': [m for m in (user_requests or []) if m != question][-5:],
                'champion_select': view, 'personal_observations': observations,
                'current_patch_names': current_names(db_path, item_map_for(view.get('game_mode'))),
+               'conversation': history or [],
                'official_references': references}
     prompt = {'system': SYSTEM, 'user': json.dumps(payload, ensure_ascii=False)}
     try:

@@ -98,17 +98,19 @@ class LiveClientTests(unittest.TestCase):
         self.assertEqual(live_client.get_game_result(events), "WIN")
         self.assertIsNone(live_client.get_game_result(events[:1]))
 
+    @patch.object(in_service, "get_active_player", return_value={"currentGold": 1234.7})
     @patch.object(in_service, "get_game_info", return_value={"game_mode": "ARAM", "map_number": 12})
     @patch.object(in_service, "get_active_player_name", return_value="Player")
     @patch.object(in_service, "get_team_gold_totals", return_value="gold")
     @patch.object(in_service, "get_scoreboard", return_value=["board"])
     @patch.object(in_service, "get_live_state")
-    def test_in_game_service_combines_riot_data(self, state, _board, totals, _name, _game):
+    def test_in_game_service_combines_riot_data(self, state, _board, totals, _name, _game, _active):
         state.return_value.status = LiveMatchStatus.IN_GAME
         result = in_service.get_in_game_context()
         self.assertEqual(result["scoreboard"], ["board"])
         self.assertEqual(result["team_gold"], "gold")
         self.assertEqual(result["active_player_name"], "Player")
+        self.assertEqual(result["current_gold"], 1234)            # 내 정확한 보유 골드
         totals.assert_called_once_with(["board"])
 
     @patch.object(live_client, "_get", side_effect=lambda endpoint: "Me#KR1" if endpoint == "/activeplayername" else None)

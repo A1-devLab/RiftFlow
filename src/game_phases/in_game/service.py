@@ -2,17 +2,24 @@
 from pathlib import Path
 
 from game_phases.common import ask, gemini_generator, show
-from riot import get_active_player_name, get_game_info, get_live_state, get_scoreboard, get_team_gold_totals
+from riot import (get_active_player, get_active_player_name, get_game_info, get_live_state, get_scoreboard,
+                  get_team_gold_totals)
 
 
 def get_in_game_context(state=None):
     """현재 게임 상태와 10명 스코어보드, 팀별 사용 골드 추정치, 내 소환사 이름을 묶는다."""
     scoreboard = get_scoreboard()
+    # 내 정확한 보유 골드(currentGold)는 activeplayer에만 있다. 다른 9명의 보유 골드는 라이엇이 주지 않는다.
+    active = get_active_player() if scoreboard is not None else None
+    active = active if isinstance(active, dict) else {}
+    gold = active.get("currentGold")
     return {
         "state": state if state is not None else get_live_state(),
         "scoreboard": scoreboard,
         "team_gold": get_team_gold_totals(scoreboard) if scoreboard is not None else None,
-        "active_player_name": get_active_player_name() if scoreboard is not None else None,
+        "active_player_name": ((active.get("riotId") or active.get("summonerName") or get_active_player_name())
+                               if scoreboard is not None else None),
+        "current_gold": int(gold) if isinstance(gold, (int, float)) else None,
         "game": get_game_info() if scoreboard is not None else None,
     }
 

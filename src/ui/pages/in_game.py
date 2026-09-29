@@ -154,8 +154,12 @@ class PlayerRow(QFrame):
         self.kda.setText(entry['kda'])
         rate = entry.get('cs_per_min')
         self.cs.setText('%d CS' % entry['cs'] + (' (%.1f)' % rate if rate is not None else ''))
-        self.gold.setText('≈%s' % f"{entry['estimated_gold']:,}")
-        self.gold.setToolTip('보유 아이템 가격 합계 추정치')
+        if entry.get('current_gold') is not None:
+            self.gold.setText('보유 %s' % f"{entry['current_gold']:,}")
+            self.gold.setToolTip('지금 가진 골드 (정확한 값). 아이템 가격 합계 추정 %s' % f"{entry['estimated_gold']:,}")
+        else:
+            self.gold.setText('≈%s' % f"{entry['estimated_gold']:,}")
+            self.gold.setToolTip('산 아이템 가격 합계 추정치 (가진 돈이 아님)')
         self._set_items(entry['items'])
 
 
@@ -181,7 +185,7 @@ class TeamPanel(QFrame):
         for index, row in enumerate(self.rows):
             row.show_entry(entries[index] if index < len(entries) else None)
         kills = sum(e['kills'] for e in entries)
-        self.total.setText('킬 %d' % kills + (' · 추정 골드 %s' % f'{total:,}' if total is not None else ''))
+        self.total.setText('킬 %d' % kills + (' · 아이템 가격 합계 %s' % f'{total:,}' if total is not None else ''))
 
 
 class InGamePage(QWidget):

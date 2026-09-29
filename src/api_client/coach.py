@@ -21,29 +21,31 @@ def recommend_runes(client, view, *, champion, opponent, user_requests, recent_p
         return {'page': None, 'summary': None, 'reasons': [], 'generated': False, 'message': str(error), 'attempts': 0}
 
 
-def coach_pick(client, view, question, *, champion, opponent, user_requests, observations):
+def coach_pick(client, view, question, *, champion, opponent, user_requests, observations, history=None):
     body = {'question': payloads.text(question, 1000), 'champion': payloads.text(champion, 40),
             'opponent': payloads.text(opponent, 40) or None, 'view': payloads.pick_view(view),
             'user_requests': payloads.user_requests(user_requests),
-            'observations': payloads.observations(observations)}
+            'observations': payloads.observations(observations), 'history': payloads.history(history)}
     try:
         return client.post_json('/v1/coach/pick', body)
     except RiotApiError as error:
         return _answer_failure(error)
 
 
-def coach_in_game(client, view, question):
+def coach_in_game(client, view, question, history=None):
     try:
         return client.post_json('/v1/coach/in-game', {'question': payloads.text(question, 1000),
-                                                      'view': payloads.live_view(view)})
+                                                      'view': payloads.live_view(view),
+                                                      'history': payloads.history(history)})
     except RiotApiError as error:
         return _answer_failure(error)
 
 
-def coach_general(client, question, context):
+def coach_general(client, question, context, history=None):
     try:
         result = client.post_json('/v1/coach/general', {'question': payloads.text(question, 1000),
-                                                        'context': payloads.general_context(context)})
+                                                        'context': payloads.general_context(context),
+                                                        'history': payloads.history(history)})
     except RiotApiError as error:
         message = str(error)
         return {'status': 'model_error', 'message': message, 'answer': None, 'generated': False, 'error': message,

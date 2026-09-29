@@ -284,6 +284,27 @@ class OutGamePage(QWidget):
         self.messages.insertWidget(self.messages.count() - 1, self._bubble(html.unescape(str(answer)), False))
         self._scroll_bottom()
 
+    def add_exchange(self, question, answer):
+        """다른 화면(AI에게 질문)에서 나눈 대화도 이 채팅에 보이게 한다."""
+        if question:
+            self.messages.insertWidget(self.messages.count() - 1, self._bubble(question, True), 0, Qt.AlignRight)
+        if answer:
+            self.messages.insertWidget(self.messages.count() - 1, self._bubble(str(answer), False))
+        self._scroll_bottom()
+
+    def load_history(self, messages):
+        """저장된 대화로 채팅을 다시 채운다 (첫 안내 말풍선은 남긴다)."""
+        while self.messages.count() > 2:
+            item = self.messages.takeAt(1)
+            if item.widget():
+                item.widget().deleteLater()
+        for message in messages[-30:]:
+            if message['role'] == 'user':
+                self.messages.insertWidget(self.messages.count() - 1, self._bubble(message['text'], True), 0, Qt.AlignRight)
+            else:
+                self.messages.insertWidget(self.messages.count() - 1, self._bubble(message['text'], False))
+        self._scroll_bottom()
+
     def show_error(self, message):
         self.messages.insertWidget(self.messages.count() - 1, self._bubble(message, False))
         self._scroll_bottom()
