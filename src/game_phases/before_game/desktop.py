@@ -4,7 +4,8 @@ import sqlite3
 from pathlib import Path
 
 from knowledge.before_game import champion_catalog, personal_context, rune_catalog, named_rune_page, canonical_champion
-from knowledge.documents import get_documents
+from knowledge.documents import get_documents, item_map_for
+from knowledge.in_game import current_names
 from rag.gemini import GeminiError
 from rag.knowledge_source import DocumentSource
 from rag.retrieve import search
@@ -95,6 +96,7 @@ def answer_before_game(db_path, personal_db_path, puuid, view, question, *, gene
                # 성향은 선택 칸 대신 사용자가 채팅으로 말한 내용에서 읽는다.
                'earlier_messages': [m for m in (user_requests or []) if m != question][-5:],
                'champion_select': view, 'personal_observations': observations,
+               'current_patch_names': current_names(db_path, item_map_for(view.get('game_mode'))),
                'official_references': references}
     prompt = {'system': SYSTEM, 'user': json.dumps(payload, ensure_ascii=False)}
     try:

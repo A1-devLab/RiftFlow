@@ -120,3 +120,20 @@ def team_composition(champions, profiles):
     return {'champions': known, 'unverified_champions': unknown,
             'tag_counts': tags, 'damage_rating_counts': ratings,
             'note': 'Data Dragon 역할 태그와 소개 지표만 집계. 실제 딜 비율·승률 통계가 아님.'}
+
+
+def _build_current_names(db_path, item_map='11'):
+    """이번 패치의 룬 이름과 해당 맵 상점 완성 아이템 이름. AI가 예전 패치·다른 모드 이름을 쓰지 않게 목록으로 준다."""
+    runes = sorted({d.get('subject_name') for d in get_documents(kind='rune', db_path=db_path) if d.get('subject_name')})
+    items = sorted({d.get('subject_name') for d in get_documents(kind='item', db_path=db_path, item_map=item_map)
+                    if d.get('subject_name') and not (d.get('fields') or {}).get('builds_into')
+                    and ((d.get('fields') or {}).get('gold_total') or 0) >= 900})
+    return {'runes': runes, 'items': items}
+
+
+def current_names(db_path, item_map='11'):
+    """{'runes': [...], 'items': [...]}. 자료가 없으면 빈 목록. item_map은 11 협곡, 12 칼바람, 30 아레나."""
+    try:
+        return _cached('names:' + item_map, db_path, lambda path: _build_current_names(path, item_map))
+    except Exception:
+        return {'runes': [], 'items': []}

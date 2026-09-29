@@ -50,11 +50,16 @@ class InGameDesktopTests(unittest.TestCase):
                 save(db, 'champion', '16.19.1', id_, name, json.dumps(
                     {'key': str(key), 'id': id_, 'name': name, 'blurb': name + ' 챔피언', 'tags': tags, 'info': info},
                     ensure_ascii=False), 'https://example.com/champion')
-            for item_id, name, text, gold in (('1056', '도란의 반지', '주문력 +18 체력', 400),
-                                              ('3157', '존야의 모래시계', '주문력 방어력 경직', 3250),
-                                              ('3089', '라바돈의 죽음모자', '주문력 대폭 증가', 3500)):
+            for item_id, name, text, gold, stats, extra in (
+                    ('1056', '도란의 반지', '주문력 +18 체력', 400, {'FlatMagicDamageMod': 18}, {}),
+                    ('3157', '존야의 모래시계', '주문력 방어력 경직', 3250, {'FlatMagicDamageMod': 105, 'FlatArmorMod': 50}, {}),
+                    ('3089', '라바돈의 죽음모자', '주문력 대폭 증가', 3500, {'FlatMagicDamageMod': 130}, {}),
+                    ('3065', '정령의 형상', '마법 저항력 체력', 2900, {'FlatSpellBlockMod': 60}, {}),
+                    ('223089', '라바돈의 죽음모자', '아레나 복사본', 2500, {'FlatMagicDamageMod': 130}, {}),
+                    ('4636', '밤의 수확자', '상점에 없음', 2765, {'FlatMagicDamageMod': 80}, {'inStore': False})):
                 save(db, 'item', '16.19.1', item_id, name, json.dumps(
-                    {'name': name, 'description': text, 'gold': {'total': gold}, 'maps': {'11': True}},
+                    dict({'name': name, 'description': text, 'gold': {'total': gold, 'purchasable': True},
+                          'maps': {'11': True}, 'stats': stats, 'into': []}, **extra),
                     ensure_ascii=False), 'https://example.com/item')
 
     def test_scoreboard_uses_my_team_and_official_item_names(self):
@@ -82,18 +87,37 @@ class InGameDesktopTests(unittest.TestCase):
         self.assertEqual(composition['damage_rating_counts'], {'AP': 1, 'AD': 1})
         self.assertEqual(composition['unverified_champions'], ['없는챔프'])
 
-    def test_item_recommendation_prompt_excludes_owned_items_and_ids(self):
+    def test_store_filter_drops_mode_copies_and_unbuyable_items(self):
+        from knowledge.documents import get_documents
+        ids = sorted(d['entity_id'] for d in get_documents(kind='item', db_path=self.db))
+        self.assertEqual(ids, ['1056', '3065', '3089', '3157'])      # 223089(아레나), 4636(상점 없음) 제외
+
+    def test_item_options_are_chosen_only_from_code_candidates(self):
         view = describe_scoreboard(context(), item_catalog(self.db))
-        generator = Mock(return_value={'text': '존야의 모래시계를 추천합니다.'})
+        reply = {'options': [{'item_id': 3089, 'reason': '주문력을 크게 올립니다.'},
+                             {'item_id': 3157, 'reason': '상대 돌진을 버팁니다.'}], 'summary': '상황에 맞게 고르세요.'}
+        generator = Mock(side_effect=[{'text': json.dumps({'options': [{'item_id': 4636, 'reason': 'x'}], 'summary': ''})},
+                                      {'text': json.dumps(reply, ensure_ascii=False)}])
         result = answer_in_game(self.db, view, '지금 뭐 사야 해?', generate=generator)
         self.assertTrue(result['generated'])
-        payload = json.loads(generator.call_args.args[0]['user'])
-        names = [item['name'] for item in payload['official_items']]
-        self.assertIn('존야의 모래시계', names)
-        self.assertNotIn('도란의 반지', names)
-        self.assertEqual(payload['me']['items'], ['도란의 반지'])
-        self.assertNotIn('1056', generator.call_args.args[0]['user'])
-        self.assertIn('추정', payload['team_gold_estimate']['note'])
+        self.assertEqual([o['name'] for o in result['options']], ['라바돈의 죽음모자', '존야의 모래시계'])
+        self.assertIn('1. 라바돈의 죽음모자 (3,500골드, 공격)', result['answer'])
+        first = json.loads(generator.call_args_list[0].args[0]['user'])
+        pool = {c['name'] for c in first['candidates']}
+        self.assertNotIn('도란의 반지', pool)                  # 이미 가진 아이템·하위 아이템 제외
+        self.assertNotIn('밤의 수확자', pool)                  # 상점에 없는 아이템 제외
+        self.assertEqual(generator.call_args.kwargs['config']['responseMimeType'], 'application/json')
+        second = json.loads(generator.call_args.args[0]['user'])
+        self.assertTrue(any('4636' in e for e in second['previous_errors']))
+
+    def test_free_answers_get_current_patch_names(self):
+        view = describe_scoreboard(context(), item_catalog(self.db))
+        generator = Mock(return_value={'text': '괜찮습니다'})
+        answer_in_game(self.db, view, '지금 불리해?', generate=generator)
+        names = json.loads(generator.call_args.args[0]['user'])['current_patch_names']
+        self.assertIn('라바돈의 죽음모자', names['items'])
+        self.assertNotIn('밤의 수확자', names['items'])
+        self.assertIn('current_patch_names', generator.call_args.args[0]['system'])
 
     def test_item_question_without_item_documents_does_not_call_model(self):
         view = describe_scoreboard(context(), {})

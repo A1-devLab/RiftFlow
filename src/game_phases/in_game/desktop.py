@@ -3,8 +3,8 @@ import json
 import sqlite3
 from functools import partial
 
-from knowledge.documents import get_documents
-from knowledge.in_game import champion_profiles, team_composition
+from knowledge.documents import get_documents, item_map_for
+from knowledge.in_game import champion_profiles, current_names, team_composition
 from rag.gemini import GeminiError
 from rag.knowledge_source import DocumentSource
 from rag.retrieve import search
@@ -88,7 +88,12 @@ def describe_scoreboard(context, catalog):
         team_gold = {'ally': int(ally_gold), 'enemy': int(enemy_gold),
                      'diff': int(ally_gold - enemy_gold), 'note': GOLD_NOTE}
     me = next((e for e in entries if e['is_me']), None)
+    from game_phases.before_game.desktop import MODE_NAMES
+    game = context.get('game') or {}
+    mode = game.get('game_mode')
     return {'in_game': True, 'elapsed_seconds': elapsed, 'clock': clock(elapsed),
+            'game_mode': mode, 'map_number': game.get('map_number'),
+            'mode_name': MODE_NAMES.get(mode, mode) if mode else None,
             'me': me, 'perspective_known': me is not None, 'my_team': my_team,
             'allies': allies, 'enemies': enemies, 'team_gold': team_gold}
 
@@ -134,6 +139,9 @@ def answer_in_game(db_path, view, question, *, generate):
     if not view or not view.get('in_game'):
         return {'answer': None, 'message': '게임 중이 아닙니다. 게임에 접속하면 실시간 스코어보드로 답합니다.',
                 'generated': False}
+    if is_item_question(question):
+        from .items import recommend_items
+        return recommend_items(db_path, view, question, generate=generate, prompt_player=prompt_player)
     me = view.get('me')
     enemies = view.get('enemies') or []
     profiles = champion_profiles(db_path)
@@ -173,7 +181,9 @@ def answer_in_game(db_path, view, question, *, generate):
                'enemies': [prompt_player(e) for e in enemies],
                'team_gold_estimate': view.get('team_gold'),
                'enemy_composition': composition,
-               'official_items': items, 'official_champions': champions[:6]}
+               'official_items': items, 'official_champions': champions[:6],
+               'game_mode': view.get('mode_name') or view.get('game_mode'),
+               'current_patch_names': current_names(db_path, item_map_for(view.get('game_mode'), view.get('map_number')))}
     prompt = {'system': SYSTEM, 'user': json.dumps(payload, ensure_ascii=False)}
     try:
         reply = generate(prompt)

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from knowledge.collector import connect, save, update
 from knowledge.documents import get_documents
+from knowledge.in_game import current_names
 from rag.knowledge_source import DocumentSource
 from rag.pipeline import answer
 
@@ -113,8 +114,10 @@ def ask_general(path, question, *, generate, profile=None, context=None):
 전적 목록이 비어 있으면 조회된 경기가 없다고 설명한다. 사용자 전적을 만들어내지 않는다.
 전적은 앱에서 마지막으로 불러온 최근 경기 스냅샷이다. 실시간으로 새로 조회했다고 말하지 않는다.
 먼저 사용자가 요청한 답을 제시하고 이어서 이유와 실행할 방법을 설명한다.
+룬과 아이템 이름은 current_patch_names 목록과 제공된 공식 자료에 있는 것만 쓴다. 기억에만 있는 룬·아이템은 이번 패치 협곡에 없을 수 있으니 쓰지 않는다.
 마크다운 제목이나 굵은 글씨 대신 읽기 쉬운 일반 텍스트로 답한다.""",
-        'user': json.dumps({'question': question, 'profile': context, 'references': references}, ensure_ascii=False),
+        'user': json.dumps({'question': question, 'profile': context, 'references': references,
+                            'current_patch_names': current_names(path)}, ensure_ascii=False),
     }
     result = dict(status='ready', message=None, answer=None, evidence=evidence,
                   sources=sources_of(evidence), generated=False, error=None)
