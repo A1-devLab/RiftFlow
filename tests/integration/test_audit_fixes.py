@@ -227,5 +227,17 @@ class KnowledgeReadTests(unittest.TestCase):
         self.assertEqual(versions, ['16.18.1', '16.19.1'])
 
 
+
+class SetKeyTests(unittest.TestCase):
+    def test_pasted_control_character_is_refused(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'deploy'))
+        import set_key
+        self.assertIsNotNone(set_key.check_key('HASA_API_KEY', ''))      # Ctrl+V가 글자로 들어간 경우
+        self.assertIsNotNone(set_key.check_key('HASA_API_KEY', 'abc'))
+        self.assertIsNone(set_key.check_key('HASA_API_KEY', 'sk-dev-' + 'a' * 32))
+        self.assertEqual(set_key.merged('sk-a', 'sk-b'), 'sk-a,sk-b')
+
+
 if __name__ == '__main__':
     unittest.main()
