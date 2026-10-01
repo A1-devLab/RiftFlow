@@ -21,7 +21,7 @@ from riot import (LiveMatchStatus, get_gameflow_phase, get_match_detail, get_cur
                   get_recent_history, get_solo_rank, start_login_watcher)
 from game_phases.before_game.desktop import describe_session, answer_before_game, get_before_game_context
 from game_phases.before_game.runes import apply_recommended_page, format_explanation, recommend_runes
-from game_phases.in_game.desktop import answer_in_game, describe_scoreboard, get_in_game_context
+from game_phases.in_game.desktop import RECOMMEND_QUESTION, answer_in_game, describe_scoreboard, get_in_game_context
 from knowledge.before_game import champion_catalog, save_observations, personal_context, rune_catalog, named_rune_page, canonical_champion
 from knowledge.in_game import item_catalog
 from .pages.out_game import OutGamePage
@@ -279,6 +279,7 @@ class Window(QMainWindow):
         if phase in ('loading', 'in_game') and previous not in ('loading', 'in_game'):
             self.chat_ids['in_game'] = None       # 새 게임: 인게임 대화를 새로 시작
             self.in_game.answer.setPlainText('게임 중 궁금한 점을 물어보세요. 이번 게임의 대화는 이어서 기억합니다.')
+            self.in_game.items.clear()
         if phase == 'champ_select':
             self.on_champ_select((payload['session'], payload['catalog']))
         else:
@@ -332,6 +333,8 @@ class Window(QMainWindow):
             lambda result: self.show_in_game_answer(result, question), on_error=self.in_game.answer.setPlainText)
 
     def show_in_game_answer(self, result, question=None):
+        if result.get('options') is not None or question == RECOMMEND_QUESTION:
+            self.in_game.items.show_result(result)     # 아이템 추천은 대화창이 아니라 추천 칸에 보여 준다
         self.record_chat('in_game', question, result.get('answer') or result.get('message'))
         self.show_transcript(self.in_game.answer, 'in_game')
         self.status.setText('인게임 답변 완료' if result['generated'] else '인게임 자료 확인 필요')

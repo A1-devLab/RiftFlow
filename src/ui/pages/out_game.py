@@ -261,12 +261,31 @@ class OutGamePage(QWidget):
         bubble.setMaximumWidth(330)
         return bubble
 
+    def _add(self, text, user=False):
+        """말풍선 한 개를 안내 문구와 끝 여백 사이에 넣는다.
+
+        줄바꿈 QLabel을 Qt.AlignRight로 넣으면 레이아웃이 높이를 한 줄 기준으로 잡아 긴 질문의 위아래가 잘렸다.
+        그래서 내 질문은 왼쪽 빈 공간(stretch)으로 오른쪽에 붙인다.
+        """
+        bubble = self._bubble(text, user)
+        if user:
+            # 줄바꿈 QLabel은 폭을 좁게 잡으므로 글 길이만큼(최대 330) 넓혀 준다. 26 = 좌우 여백 12*2 + 테두리.
+            bubble.ensurePolished()             # 스타일시트 글꼴로 재야 폭이 맞다
+            natural = 4 + max((bubble.fontMetrics().horizontalAdvance(line) for line in text.splitlines()), default=0)
+            bubble.setMinimumWidth(min(330, natural + 26))
+            row = QWidget()
+            line = QHBoxLayout(row)
+            line.setContentsMargins(0, 0, 0, 0)
+            line.addStretch(1)
+            line.addWidget(bubble)
+            bubble = row
+        self.messages.insertWidget(self.messages.count() - 1, bubble)
+
     def submit(self):
         question = self.question.text().strip()
         if not question or not self.send.isEnabled():
             return
-        self.messages.insertWidget(self.messages.count() - 1, self._bubble(question, True), 0,
-                                   Qt.AlignRight)
+        self._add(question, True)
         self.question.clear()
         self.askRequested.emit(question)
 
@@ -275,21 +294,21 @@ class OutGamePage(QWidget):
         self.question.setEnabled(not busy)
         self.refresh_button.setEnabled(not busy)
         if busy:
-            self.messages.insertWidget(self.messages.count() - 1, self._bubble("자료를 찾고 있습니다…", False))
+            self._add("자료를 찾고 있습니다…")
 
     def show_answer(self, result):
         answer = result.get("answer") or result.get("message") or result.get("error")
         if not answer:
             answer = "관련 근거를 찾았어요. Gemini를 사용하지 않아 자료 목록만 표시합니다."
-        self.messages.insertWidget(self.messages.count() - 1, self._bubble(html.unescape(str(answer)), False))
+        self._add(html.unescape(str(answer)))
         self._scroll_bottom()
 
     def add_exchange(self, question, answer):
         """다른 화면(AI에게 질문)에서 나눈 대화도 이 채팅에 보이게 한다."""
         if question:
-            self.messages.insertWidget(self.messages.count() - 1, self._bubble(question, True), 0, Qt.AlignRight)
+            self._add(question, True)
         if answer:
-            self.messages.insertWidget(self.messages.count() - 1, self._bubble(str(answer), False))
+            self._add(str(answer))
         self._scroll_bottom()
 
     def load_history(self, messages):
@@ -299,14 +318,11 @@ class OutGamePage(QWidget):
             if item.widget():
                 item.widget().deleteLater()
         for message in messages[-30:]:
-            if message['role'] == 'user':
-                self.messages.insertWidget(self.messages.count() - 1, self._bubble(message['text'], True), 0, Qt.AlignRight)
-            else:
-                self.messages.insertWidget(self.messages.count() - 1, self._bubble(message['text'], False))
+            self._add(message['text'], message['role'] == 'user')
         self._scroll_bottom()
 
     def show_error(self, message):
-        self.messages.insertWidget(self.messages.count() - 1, self._bubble(message, False))
+        self._add(message)
         self._scroll_bottom()
 
     def _scroll_bottom(self):

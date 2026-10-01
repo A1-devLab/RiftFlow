@@ -11,6 +11,7 @@ from ui.match_assets import MatchAssets
 from ui.portraits import ChampionPortraits
 
 ITEM_SLOTS = 7
+ITEM_PICKS = 3
 
 
 def label(text='', name=None):
@@ -163,6 +164,99 @@ class PlayerRow(QFrame):
         self._set_items(entry['items'])
 
 
+class ItemPick(QFrame):
+    """추천 아이템 한 칸: 아이콘, 이름, 가격, 짧은 이유."""
+
+    def __init__(self, assets, parent=None):
+        super().__init__(parent)
+        self.setObjectName('itemPick')
+        self.assets = assets
+        row = QHBoxLayout(self)
+        row.setContentsMargins(8, 6, 8, 6)
+        row.setSpacing(9)
+        self.icon = label('', 'pickIcon')
+        self.icon.setFixedSize(36, 36)
+        row.addWidget(self.icon)
+        text = QVBoxLayout()
+        text.setSpacing(1)
+        head = QHBoxLayout()
+        self.name = label('', 'pickName')
+        self.name.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.price = label('', 'pickPrice')
+        head.addWidget(self.name, 1)
+        head.addWidget(self.price)
+        text.addLayout(head)
+        self.reason = label('', 'pickReason')
+        self.reason.setWordWrap(True)
+        text.addWidget(self.reason)
+        row.addLayout(text, 1)
+        self.show_option(None)
+
+    def show_option(self, option):
+        self.setVisible(option is not None)
+        self.icon.clear()
+        if option is None:
+            return
+        self.name.setText(option['name'])
+        self.name.setToolTip(option['name'])
+        self.price.setText(f"{option['price']:,}")
+        # 보유 골드는 글로 안내하지 않고 가격 색으로만 보여 준다: 초록 = 지금 살 수 있음.
+        affordable = option.get('affordable')
+        self.price.setProperty('affordable', 'yes' if affordable else 'no' if affordable is False else 'unknown')
+        self.price.style().unpolish(self.price)
+        self.price.style().polish(self.price)
+        remaining = option.get('remaining_cost')
+        self.price.setToolTip('가진 재료를 빼면 %s골드' % f'{remaining:,}'
+                              if remaining is not None and remaining != option['price'] else '')
+        self.reason.setText(option.get('reason') or '')
+        self.assets.attach(self.icon, 'item', option['item_id'])
+
+
+class ItemCard(QFrame):
+    """인게임 아이템 추천 칸. 후보 3개와 가격을 대화와 따로 보여 준다."""
+    requested = Signal()
+
+    def __init__(self, assets, parent=None):
+        super().__init__(parent)
+        self.setObjectName('itemCard')
+        box = QVBoxLayout(self)
+        box.setContentsMargins(12, 10, 12, 10)
+        box.setSpacing(6)
+        head = QHBoxLayout()
+        head.addWidget(label('추천 아이템', 'panelTitle'))
+        head.addStretch()
+        self.button = QPushButton('추천 받기')
+        self.button.setObjectName('primary')
+        self.button.clicked.connect(self.requested.emit)
+        head.addWidget(self.button)
+        box.addLayout(head)
+        self.caption = label('', 'subtle')
+        self.caption.setWordWrap(True)
+        box.addWidget(self.caption)
+        self.picks = [ItemPick(assets) for _ in range(ITEM_PICKS)]
+        for pick in self.picks:
+            box.addWidget(pick)
+        self.clear()
+
+    def clear(self, text='게임 중 버튼을 누르면 지금 상황에 맞는 아이템 3개를 골라 줍니다.'):
+        self.caption.setText(text)
+        self.button.setText('추천 받기')
+        for pick in self.picks:
+            pick.show_option(None)
+
+    def show_result(self, result):
+        options = result.get('options') or []
+        if not options:
+            self.caption.setText(result.get('message') or '추천을 만들지 못했습니다.')
+            return
+        for index, pick in enumerate(self.picks):
+            pick.show_option(options[index] if index < len(options) else None)
+        summary = result.get('summary') or ''
+        source = ' · '.join(x for x in (result.get('mode_name'), result.get('version')) if x)
+        self.caption.setText(summary + ('  (%s)' % source if source and summary else source))
+        self.button.setText('다시 추천')
+
+
 class TeamPanel(QFrame):
     def __init__(self, title, portraits, assets, parent=None):
         super().__init__(parent)
@@ -236,21 +330,23 @@ class InGamePage(QWidget):
         scroll.setWidget(board)
         root.addWidget(scroll, 5)
 
+        side = QWidget()
+        column = QVBoxLayout(side)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(12)
+        self.items = ItemCard(self.assets)
+        self.items.requested.connect(lambda: self._emit(RECOMMEND_QUESTION))
+        self.recommend = self.items.button
+        column.addWidget(self.items)
         coach = QFrame(objectName='coachPanel')
         right = QVBoxLayout(coach)
-        right.setContentsMargins(14, 14, 14, 14)
-        right.addWidget(label('인게임 코치', 'panelTitle'))
-        note = label('스코어보드에 있는 값(레벨·KDA·CS·아이템)과 공식 아이템 자료로만 답합니다. '
-                     '시야, 상대 주문 쿨타임, 오브젝트 타이머는 확인할 수 없습니다.', 'subtle')
-        note.setWordWrap(True)
-        right.addWidget(note)
+        right.setContentsMargins(14, 12, 14, 12)
+        right.addWidget(label('AI에게 질문', 'panelTitle'))
         self.answer = QTextBrowser()
+        self.answer.setToolTip('스코어보드(레벨·KDA·CS·아이템)와 공식 자료로만 답합니다. '
+                               '시야, 상대 주문 쿨타임, 오브젝트 타이머는 알 수 없습니다.')
         self.answer.setPlainText('게임에 접속하면 현재 스코어보드를 바탕으로 질문에 답합니다.')
         right.addWidget(self.answer, 1)
-        self.recommend = QPushButton('지금 살 아이템 추천')
-        self.recommend.setObjectName('primary')
-        self.recommend.clicked.connect(lambda: self._emit(RECOMMEND_QUESTION))
-        right.addWidget(self.recommend)
         form = QHBoxLayout()
         self.question = QLineEdit()
         self.question.setMaxLength(1000)
@@ -261,8 +357,9 @@ class InGamePage(QWidget):
         form.addWidget(self.question, 1)
         form.addWidget(self.send)
         right.addLayout(form)
-        coach.setMinimumWidth(300)
-        root.addWidget(coach, 3)
+        column.addWidget(coach, 1)
+        side.setMinimumWidth(300)
+        root.addWidget(side, 3)
         self.show_disconnected()
 
     def show_view(self, view):
@@ -276,9 +373,9 @@ class InGamePage(QWidget):
         gold = view.get('team_gold')
         if gold:
             self.gold_bar.set_values(gold['ally'], gold['enemy'])
-            self.gold_text.setText('아군 추정 %s · 상대 추정 %s · 차이 %+d  —  보유 아이템 가격 합계 기준이라 '
-                                   '아직 쓰지 않은 골드는 빠져 있습니다.' % (
-                                       f"{gold['ally']:,}", f"{gold['enemy']:,}", gold['diff']))
+            self.gold_text.setText('아이템 가격 합계  아군 %s · 상대 %s (%+d)' % (
+                f"{gold['ally']:,}", f"{gold['enemy']:,}", gold['diff']))
+            self.gold_text.setToolTip('산 아이템 가격을 더한 값입니다. 아직 쓰지 않은 골드는 빠져 있습니다.')
         else:
             self.gold_bar.set_values(0, 0)
             self.gold_text.setText('팀 골드 추정치를 계산하지 못했습니다.')
@@ -294,6 +391,7 @@ class InGamePage(QWidget):
         self.view = {'in_game': False}
         self.clock.setText('--:--')
         self.state.setText('게임 접속을 기다리고 있습니다. 게임이 시작되면 자동으로 이 화면으로 넘어옵니다.')
+        self.items.clear()
         self.gold_bar.set_values(0, 0)
         self.gold_text.setText('')
         self.ally.show_team([])
@@ -321,7 +419,13 @@ QLabel#title { color: #edf4ff; font-size: 27px; font-weight: 700; }
 QLabel#clock { background: #173a38; color: #72e2c7; border-radius: 8px; padding: 6px 10px; font-size: 16px; font-weight: 700; }
 QLabel#subtle { color: #94a8c2; font-size: 12px; }
 QLabel#panelTitle { color: #edf4ff; font-size: 18px; font-weight: 700; }
-QFrame#teamPanel, QFrame#coachPanel { background: #151f2e; border: 1px solid #2a3a4f; border-radius: 12px; }
+QFrame#teamPanel, QFrame#coachPanel, QFrame#itemCard { background: #151f2e; border: 1px solid #2a3a4f; border-radius: 12px; }
+QFrame#itemPick { background: #182536; border-radius: 8px; }
+QLabel#pickIcon { background: #0e1724; border: 1px solid #2e3f56; border-radius: 5px; }
+QLabel#pickName { color: #edf4ff; font-size: 14px; font-weight: 700; }
+QLabel#pickPrice { color: #f0c86b; font-size: 13px; font-weight: 700; }
+QLabel#pickPrice[affordable="yes"] { color: #56d7b6; }
+QLabel#pickReason { color: #a9bad0; font-size: 12px; }
 QLabel#teamTitle { color: #7dc9e9; font-size: 16px; font-weight: 700; }
 QLabel#teamTotal { color: #aabbd2; font-size: 12px; }
 QFrame#playerRow { background: #182536; border: 1px solid transparent; border-radius: 8px; }

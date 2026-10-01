@@ -95,13 +95,17 @@ class InGameDesktopTests(unittest.TestCase):
     def test_item_options_are_chosen_only_from_code_candidates(self):
         view = describe_scoreboard(context(), item_catalog(self.db))
         reply = {'options': [{'item_id': 3089, 'reason': '주문력을 크게 올립니다.'},
-                             {'item_id': 3157, 'reason': '상대 돌진을 버팁니다.'}], 'summary': '상황에 맞게 고르세요.'}
+                             {'item_id': 3157, 'reason': '상대 돌진을 버팁니다.'},
+                             {'item_id': 3065, 'reason': '마법 피해를 버팁니다.'}], 'summary': '상황에 맞게 고르세요.'}
         generator = Mock(side_effect=[{'text': json.dumps({'options': [{'item_id': 4636, 'reason': 'x'}], 'summary': ''})},
                                       {'text': json.dumps(reply, ensure_ascii=False)}])
         result = answer_in_game(self.db, view, '지금 뭐 사야 해?', generate=generator)
         self.assertTrue(result['generated'])
-        self.assertEqual([o['name'] for o in result['options']], ['라바돈의 죽음모자', '존야의 모래시계'])
-        self.assertIn('1. 라바돈의 죽음모자 (3,500골드, 공격 · 보유 골드 확인 불가)', result['answer'])
+        self.assertEqual([o['name'] for o in result['options']][:2], ['라바돈의 죽음모자', '존야의 모래시계'])
+        self.assertEqual(len(result['options']), 3)                      # 추천 칸은 항상 3개
+        self.assertTrue(result['answer'].startswith('추천: 라바돈의 죽음모자(3,500)'))
+        self.assertNotIn('골드', result['answer'])                       # 보유 골드를 글로 안내하지 않음
+        self.assertIsNone(result['options'][0]['affordable'])
         first = json.loads(generator.call_args_list[0].args[0]['user'])
         pool = {c['name'] for c in first['candidates']}
         self.assertNotIn('도란의 반지', pool)                  # 이미 가진 아이템·하위 아이템 제외
@@ -111,7 +115,7 @@ class InGameDesktopTests(unittest.TestCase):
         self.assertTrue(any('4636' in e for e in second['previous_errors']))
 
     def test_current_gold_is_exact_for_me_and_decides_buy_status(self):
-        from game_phases.in_game.items import buy_label, remaining_cost, store_items
+        from game_phases.in_game.items import remaining_cost, store_items
         gold_context = dict(context(), current_gold=1200)
         view = describe_scoreboard(gold_context, item_catalog(self.db))
         self.assertEqual(view['me']['current_gold'], 1200)
@@ -123,17 +127,16 @@ class InGameDesktopTests(unittest.TestCase):
         items = store_items(self.db)
         rabadon = dict(items[3089], **{'from': ['1056']})                 # 도란의 반지(400)를 재료로 가정
         self.assertEqual(remaining_cost(rabadon, items, view['me']), 3100)
-        self.assertEqual(buy_label({'remaining_cost': 3100}, 1200), '1,900골드 부족')
-        self.assertEqual(buy_label({'remaining_cost': 1000}, 1200), '지금 구매 가능')
-        self.assertEqual(buy_label({'remaining_cost': 1000}, None), '보유 골드 확인 불가')
-        reply = {'options': [{'item_id': 3089, 'reason': '주문력'}, {'item_id': 3065, 'reason': '마저'}], 'summary': ''}
+        reply = {'options': [{'item_id': 3089, 'reason': '주문력'}, {'item_id': 3065, 'reason': '마저'},
+                             {'item_id': 3157, 'reason': '생존'}, {'item_id': 3089, 'reason': '넷째는 버림'}], 'summary': ''}
         generator = Mock(return_value={'text': json.dumps(reply, ensure_ascii=False)})
-        answer = answer_in_game(self.db, view, '뭐 사야 해?', generate=generator)['answer']
-        self.assertIn('3,500골드, 공격 · 2,300골드 부족', answer)
-        self.assertIn('내 보유 골드 1,200 기준', answer)
+        result = answer_in_game(self.db, view, '뭐 사야 해?', generate=generator)
+        self.assertEqual(len(result['options']), 3)                      # 3개보다 많이 고르면 앞의 3개만
+        self.assertFalse(result['options'][0]['affordable'])             # 3,500 > 1,200: 화면이 가격 색으로만 표시
+        self.assertNotIn('부족', result['answer'])
         sent = json.loads(generator.call_args.args[0]['user'])
         self.assertEqual(sent['me']['current_gold'], 1200)
-        self.assertIn('buy_now', sent['candidates'][0])
+        self.assertNotIn('remaining_cost', sent['candidates'][0])
 
     def test_free_answers_get_current_patch_names(self):
         view = describe_scoreboard(context(), item_catalog(self.db))
