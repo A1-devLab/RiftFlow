@@ -150,12 +150,21 @@ AI가 최신 자료를 근거로 답하게 하려면 **설정 및 데이터 → 
 |---|---|
 | `GEMINI_API_KEY` | **AI 코칭에 필요합니다.** Google AI Studio에서 발급합니다. |
 | `GEMINI_MODEL` | 사용할 Gemini 모델입니다. 기본값은 `gemini-3.5-flash-lite`입니다. |
+| `LLM_PROVIDER` | 선택. `hasa`면 [HASA Open AI Service Hub](https://open.hasa.re.kr)의 OpenAI 호환 모델을 먼저 쓰고, 실패하면 Gemini로 넘어갑니다. 비우면 Gemini만 씁니다. |
+| `HASA_API_KEY` | `LLM_PROVIDER=hasa`일 때 필요합니다. 포털의 인증키 메뉴에서 개발키(`sk-dev-…`)를 발급합니다. |
+| `HASA_MODEL` | 선택. 기본값 `qwen3-next-80b`. 쉼표로 순서를 정할 수 있고, 키에 권한이 없는 모델은 10분 동안 건너뜁니다. |
 | `RIOT_API_KEY` | 로그인 계정 인식, 랭크와 전적 조회에 사용합니다. [Riot Developer Portal](https://developer.riotgames.com/)에서 발급합니다. |
 | `RIOT_PLATFORM` | 선택. 플랫폼 라우팅, 기본값 `kr` |
 | `RIOT_REGION` | 선택. 대륙 라우팅, 기본값 `asia` |
 
 픽창과 인게임 정보는 로컬 롤 클라이언트에서 직접 읽으므로 Riot API 키가 필요하지 않습니다.
 Gemini는 질문을 보낼 때만 한 번 호출하며(재시도 없음, 약 60초 제한), 사용할 모델은 설정 화면에서도 바꿀 수 있습니다.
+
+키는 채팅이나 명령줄에 붙이지 말고 아래 스크립트로 넣습니다. 입력이 화면에 보이지 않고, 로컬 `.env`와 서버 `server.env`에 함께 들어갑니다.
+
+```bash
+.venv\Scripts\python.exe deploy\set_key.py HASA_API_KEY
+```
 
 ## 명령줄 도구
 

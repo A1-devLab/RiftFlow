@@ -85,16 +85,28 @@ def client_ip(request):
 
 
 def gemini_generator(settings):
+    """설정한 제공자(LLM_PROVIDER)의 호출 함수.
+
+    HASA는 동시 1건 한도라 429에 짧게 기다렸다 한 번 더 보낸다. Gemini 키도 있으면 HASA가 실패할 때 Gemini로 넘긴다.
+    """
     from rag.gemini import generate
-    return lambda prompt, **options: generate(prompt, model=settings.gemini_model, key=settings.gemini_api_key,
-                                              retries=0, **options)
+    from rag.llm import with_fallback
+    call_gemini = (lambda prompt, **options: generate(prompt, model=settings.gemini_model, key=settings.gemini_api_key,
+                                                      retries=0, **options)) if settings.gemini_api_key else None
+    if settings.llm_provider == "hasa" and settings.hasa_api_key:
+        from rag.openai_compat import generate as call_hasa
+        hasa = lambda prompt, **options: call_hasa(prompt, model=settings.hasa_model, key=settings.hasa_api_key,
+                                                   retries=1, **options)
+        return with_fallback(hasa, call_gemini)
+    return call_gemini or (lambda prompt, **options: generate(prompt, model=settings.gemini_model,
+                                                              key=settings.gemini_api_key, retries=0, **options))
 
 
 def create_app(settings=None, gateway=None, clock=time.time, generate=None):
     settings = settings or Settings.from_env()
     db = Database(settings.db_path)
     riot = RiotData(db, gateway or RiotGateway(settings), clock=clock)
-    ai_enabled = bool(generate or settings.gemini_api_key)
+    ai_enabled = bool(generate or settings.hasa_api_key or settings.gemini_api_key)
     ai = AiService(db, settings.knowledge_db_path, generate or gemini_generator(settings))
     registrations = defaultdict(deque)
     registrations_lock = threading.Lock()

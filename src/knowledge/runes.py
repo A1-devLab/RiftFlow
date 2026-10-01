@@ -90,8 +90,45 @@ def _slot_index(trees):
             for slot, runes in enumerate(tree['slots']) for rune in runes}
 
 
+def _names(trees):
+    return {rune['id']: rune['name'] for tree in trees.values() for runes in tree['slots'] for rune in runes}
+
+
 def _is_int(value):
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _as_id(value, names):
+    """정수 ID는 그대로, '8112' 같은 숫자 글자는 정수로, 공식 이름이면 그 ID로 바꾼다. 모르면 원래 값."""
+    if isinstance(value, str):
+        text = value.strip()
+        if text.isdigit():
+            return int(text)
+        return names.get(text, value)
+    return value
+
+
+def resolve_names(page, trees):
+    """모델이 ID 대신 공식 이름을 쓴 경우 ID로 바꾼다. 어떤 룬을 고를지는 바꾸지 않는다.
+
+    Gemini에는 응답 스키마로 정수 ID를 강제했지만, 스키마를 쓰지 못하는 모델(gpt-oss 등)은 같은 룬을 이름으로 쓴다.
+    이름은 이번 패치 룬 목록과 정확히 같을 때만 바꾸므로, 목록에 없는 룬은 그대로 남아 validate_page가 거절한다.
+    """
+    if not isinstance(page, dict):
+        return page
+    tree_names = {tree['name']: tree_id for tree_id, tree in trees.items()}
+    rune_names = {rune['name']: rune['id'] for tree in trees.values() for runes in tree['slots'] for rune in runes}
+    page = dict(page)
+    for key in ('primary_style', 'secondary_style'):
+        page[key] = _as_id(page.get(key), tree_names)
+    page['keystone'] = _as_id(page.get('keystone'), rune_names)
+    for key in ('primary', 'secondary'):
+        if isinstance(page.get(key), list):
+            page[key] = [_as_id(value, rune_names) for value in page[key]]
+    if isinstance(page.get('shards'), list):
+        page['shards'] = [_as_id(value, {name: shard_id for shard_id, name in SHARD_ROWS[index][1]})
+                          if index < len(SHARD_ROWS) else value for index, value in enumerate(page['shards'])]
+    return page
 
 
 def validate_page(page, trees):
@@ -131,7 +168,12 @@ def validate_page(page, trees):
                 valid = False
             slots.append(slot)
         if valid and sorted(slots) != [1, 2, 3]:
-            errors.append('primary는 주 트리 1, 2, 3번 슬롯에서 하나씩 골라야 합니다.')
+            names = _names(trees)
+            same = ', '.join('row%d에 %s' % (slot, '·'.join(names.get(r, str(r)) for r in primary if where[r][1] == slot))
+                             for slot in sorted(set(slots)) if slots.count(slot) > 1)
+            missing = ', '.join('row%d' % slot for slot in (1, 2, 3) if slot not in slots)
+            errors.append('primary는 주 트리 row1, row2, row3에서 하나씩 골라야 합니다. 같은 줄에서 두 개 고름(%s), %s에서 고르지 않음.'
+                          % (same, missing))
 
     secondary = id_list('secondary', 2)
     if secondary is not None:
@@ -142,7 +184,7 @@ def validate_page(page, trees):
                 errors.append('secondary의 %d는 보조 트리의 1~3번 슬롯 룬이 아닙니다.' % rune)
             slots.append(slot)
         if len(slots) == 2 and slots[0] is not None and slots[0] == slots[1]:
-            errors.append('secondary 두 개는 보조 트리의 서로 다른 슬롯에서 골라야 합니다.')
+            errors.append('secondary 두 개는 보조 트리의 서로 다른 줄(row)에서 골라야 합니다. 둘 다 row%d입니다.' % slots[0])
 
     shards = id_list('shards', 3)
     if shards is not None:

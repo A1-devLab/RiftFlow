@@ -4,17 +4,16 @@ from functools import partial
 from pathlib import Path
 
 from rag.config import load_env
-from rag.gemini import DEFAULT_MODEL, generate
+from rag import llm
 from ui.services import ask_database
 
 
 def gemini_generator():
-    """터미널 흐름용 Gemini 호출 함수. 키가 없으면 바로 알린다."""
+    """터미널 흐름용 AI 호출 함수 (LLM_PROVIDER로 Gemini/HASA 선택). 키가 없으면 바로 알린다."""
     load_env(".env")
-    model = os.environ.get("GEMINI_MODEL") or DEFAULT_MODEL
-    if not os.environ.get("GEMINI_API_KEY"):
-        raise RuntimeError(".env에 GEMINI_API_KEY를 설정하세요.")
-    return partial(generate, model=model, retries=0)
+    if not llm.has_key():
+        raise RuntimeError(".env에 %s를 설정하세요." % llm.key_env())
+    return partial(llm.generate, model=llm.default_model(), retries=0)
 
 
 def ask(question, *, analysis=None, prompt_builder=None, retrieval_question=None,

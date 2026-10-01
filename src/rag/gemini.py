@@ -15,6 +15,7 @@ API 키는 환경변수 GEMINI_API_KEY 에서 읽는다.
 - 키가 틀리면 401 이 아니라 400 에 API_KEY_INVALID 로 온다.
 아직 확인하지 못한 것: 성공 응답의 본문 구조. 첫 성공 호출 때 확인해야 한다.
 """
+import http.client
 import json
 import math
 import os
@@ -199,6 +200,10 @@ def generate(prompt, model=DEFAULT_MODEL, key=None, config=None, opener=None,
                 sleep(BACKOFF_SECONDS * (attempt + 1))
                 continue
             raise GeminiError('Gemini 에 연결하지 못했습니다: %s' % error.reason)
+        except (TimeoutError, OSError, http.client.HTTPException, ValueError) as error:
+            # 응답을 읽다가 시간이 다 되거나(TimeoutError) 연결이 끊기면 URLError가 아닌 예외가 난다.
+            # 그대로 두면 호출한 쪽(룬·아이템)이 GeminiError만 잡으므로 작업이 조용히 멈췄다.
+            raise GeminiError('Gemini 응답이 늦거나 끊겼습니다 (%s). 잠시 뒤 다시 시도하세요.' % type(error).__name__)
 
     usage = payload.get('usageMetadata') or {}
     text, reason = read_text(payload)

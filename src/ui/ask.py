@@ -5,7 +5,8 @@ from functools import partial
 from pathlib import Path
 
 from rag.config import load_env
-from rag.gemini import DEFAULT_MODEL, generate
+from rag import llm
+from rag.llm import generate
 from ui.services import ask_database
 
 
@@ -26,9 +27,9 @@ def main():
 
     call_model = None
     if not args.local:
-        model = args.model or os.environ.get("GEMINI_MODEL") or DEFAULT_MODEL
-        if not os.environ.get("GEMINI_API_KEY"):
-            parser.error(".env에 GEMINI_API_KEY를 설정하세요.")
+        model = args.model or llm.default_model()
+        if not llm.has_key():
+            parser.error(".env에 %s를 설정하세요." % llm.key_env())
         call_model = partial(generate, model=model, retries=0)
         print("Gemini 모델: %s" % model)
 

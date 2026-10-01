@@ -117,10 +117,10 @@ class RuneRecommendationTests(unittest.TestCase):
     def test_rule_violations_are_reported(self):
         cases = {
             'keystone': dict(VALID, keystone=8010),
-            '1, 2, 3번 슬롯에서 하나씩': dict(VALID, primary=[8126, 8139, 8135]),
+            'row2에서 고르지 않음': dict(VALID, primary=[8126, 8139, 8135]),
             'secondary_style은': dict(VALID, secondary_style=8100, secondary=[8139, 8120]),
             'secondary의 8010': dict(VALID, secondary=[8010, 8014]),
-            '서로 다른 슬롯': dict(VALID, secondary=[8014, 8017]),
+            '서로 다른 줄(row)': dict(VALID, secondary=[8014, 8017]),
             '방어 줄': dict(VALID, shards=[5008, 5008, 5005]),
             '정수 ID 3개': dict(VALID, primary=[8126, 8136]),
         }
@@ -153,6 +153,7 @@ class RuneRecommendationTests(unittest.TestCase):
         self.assertEqual(first['my_recent_pages'], [{'won': False, 'opponent': 'Lux',
                                                      'page': [{'tree': '정밀', 'runes': ['정복자']}]}])
         self.assertEqual(len(first['rune_catalog']), 2)
+        self.assertEqual(sorted(first['rune_catalog'][0])[:3], ['keystones', 'row1', 'row2'])   # 줄 이름을 붙여 준다
         self.assertEqual(first['user_requests'], ['초반 운영 알려줘', '공격적으로 하고 싶어'])
         self.assertEqual(result['page']['primary'][0]['name'], '비열한 한 방')
         self.assertEqual(result['reasons'], [{'rune': '감전', 'reason': '감전은 짧은 연계에 추가 피해를 줍니다.'}])
@@ -160,11 +161,11 @@ class RuneRecommendationTests(unittest.TestCase):
         self.assertIn('감전: 감전은', text)
         self.assertIn('승률 통계가 아니라', text)
 
-    def test_gives_up_after_second_invalid_reply(self):
+    def test_gives_up_after_third_invalid_reply(self):
         generate = Mock(return_value={'text': 'not json'})
         result = recommend_runes(self.db, self.personal, None, VIEW, generate=generate)
         self.assertIsNone(result['page'])
-        self.assertEqual(generate.call_count, 2)
+        self.assertEqual(generate.call_count, 3)
         self.assertIn('규칙에 맞는', result['message'])
 
     def test_missing_structure_or_champion_does_not_call_model(self):

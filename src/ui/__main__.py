@@ -16,7 +16,8 @@ from PySide6.QtWidgets import (
 
 from knowledge.documents import get_documents
 from rag.config import load_env
-from rag.gemini import DEFAULT_MODEL, generate
+from rag import llm
+from rag.llm import generate
 from riot import (LiveMatchStatus, get_gameflow_phase, get_match_detail, get_current_summoner, get_live_state,
                   get_recent_history, get_solo_rank, start_login_watcher)
 from game_phases.before_game.desktop import describe_session, answer_before_game, get_before_game_context
@@ -315,9 +316,9 @@ class Window(QMainWindow):
         if self.jobs:
             return
         if not self.ai_ready():
-            self.in_game.answer.setPlainText('AI 답변에 필요한 GEMINI_API_KEY를 .env에 설정해 주세요.')
+            self.in_game.answer.setPlainText('AI 답변에 필요한 API 키(%s)를 .env에 설정해 주세요.' % llm.key_env())
             return
-        model = self.model.text().strip() or DEFAULT_MODEL
+        model = self.model.text().strip() or llm.default_model()
         path = self.db_path
         self.in_game.answer.setPlainText('현재 스코어보드와 공식 자료를 확인하고 있습니다…')
         server, history, question = self.server(), self.chat_context('in_game'), request['question']
@@ -438,9 +439,9 @@ class Window(QMainWindow):
         if self.jobs:
             return
         if not self.ai_ready():
-            self.before_game.answer.setPlainText('AI 답변에 필요한 GEMINI_API_KEY를 .env에 설정해 주세요.')
+            self.before_game.answer.setPlainText('AI 답변에 필요한 API 키(%s)를 .env에 설정해 주세요.' % llm.key_env())
             return
-        model = self.model.text().strip() or DEFAULT_MODEL
+        model = self.model.text().strip() or llm.default_model()
         puuid = self.riot_context['player'].puuid if self.riot_context else None
         self.before_game.answer.setPlainText('확정된 픽과 공식 자료를 확인하고 있습니다…')
         server, path, history = self.server(), self.db_path, self.chat_context('pick')
@@ -469,9 +470,9 @@ class Window(QMainWindow):
         if self.jobs:
             return False
         if not self.ai_ready():
-            self.before_game.rune_view.show_message('룬 추천에 필요한 GEMINI_API_KEY를 .env에 설정해 주세요.')
+            self.before_game.rune_view.show_message('룬 추천에 필요한 API 키(%s)를 .env에 설정해 주세요.' % llm.key_env())
             return False
-        model = self.model.text().strip() or DEFAULT_MODEL
+        model = self.model.text().strip() or llm.default_model()
         path, personal = self.db_path, self.personal_path
         # 룬 트리 구조가 없을 때 내려받아 채우는 건 수집한 자료 DB에서만 한다. 예시 자료는 건드리지 않는다.
         download = path == self.live_path
@@ -588,7 +589,7 @@ class Window(QMainWindow):
         layout.addWidget(label('AI는 일반 지식과 연결된 전적을 활용하고, 선택한 자료도 보조로 참고합니다. 예시 자료는 과거 버전의 소량 데이터입니다. 실제 사용 시 공식 자료를 업데이트하세요.', 'muted'))
         self.connection = label('', 'badge')
         layout.addWidget(self.connection)
-        self.model = QLineEdit(os.environ.get('GEMINI_MODEL') or DEFAULT_MODEL)
+        self.model = QLineEdit(llm.default_model())
         self.model.setPlaceholderText('Google AI Studio에서 사용 가능한 Gemini 모델 ID')
         layout.addWidget(self.model)
         self.sync = QPushButton('공식 게임 자료 수집 / 업데이트')
@@ -613,7 +614,7 @@ class Window(QMainWindow):
         return shared_client(url)
 
     def ai_ready(self):
-        return self.server() is not None or bool(os.environ.get('GEMINI_API_KEY'))
+        return self.server() is not None or llm.has_key()
 
     @property
     def db_path(self):
@@ -635,7 +636,7 @@ class Window(QMainWindow):
         riot = ('RiftFlow 서버' if os.environ.get('RIFTFLOW_SERVER_URL') else
                 'Riot 키 ' + ('설정됨' if os.environ.get('RIOT_API_KEY') else '미설정'))
         ai = 'RiftFlow 서버' if os.environ.get('RIFTFLOW_SERVER_URL') else (
-            'Gemini 키 ' + ('설정됨' if os.environ.get('GEMINI_API_KEY') else '미설정'))
+            '%s 키 ' % ('HASA' if llm.provider() == 'hasa' else 'Gemini') + ('설정됨' if llm.has_key() else '미설정'))
         self.connection.setText('AI: %s  ·  전적: %s' % (ai, riot))
 
     def start_job(self, function, callback, on_error=None):
@@ -681,9 +682,9 @@ class Window(QMainWindow):
         if self.jobs:
             return
         if not self.ai_ready():
-            self.out_game.show_error('AI 답변에 필요한 GEMINI_API_KEY를 .env에 설정한 뒤 앱을 다시 실행하세요.')
+            self.out_game.show_error('AI 답변에 필요한 API 키(%s)를 .env에 설정한 뒤 앱을 다시 실행하세요.' % llm.key_env())
             return
-        model = self.model.text().strip() or DEFAULT_MODEL
+        model = self.model.text().strip() or llm.default_model()
         path, profile = self.db_path, self.riot_context
         self.status.setText('AI 답변을 준비하고 있습니다.')
         history = self.chat_context('general')
@@ -760,9 +761,9 @@ class Window(QMainWindow):
         question = self.question.text().strip()
         if not question:
             return
-        model = self.model.text().strip() or DEFAULT_MODEL
+        model = self.model.text().strip() or llm.default_model()
         if not self.ai_ready():
-            self.reply.setPlainText('AI 답변에 필요한 Gemini API 키가 없습니다. .env 파일에 GEMINI_API_KEY를 설정한 뒤 앱을 다시 실행하세요.')
+            self.reply.setPlainText('AI 답변에 필요한 API 키가 없습니다. .env 파일에 %s를 설정한 뒤 앱을 다시 실행하세요.' % llm.key_env())
             return
         path, profile = self.db_path, self.riot_context
         self.render_general(pending=question)

@@ -144,10 +144,16 @@ def validate(answer, pool):
         return None, ['응답은 options 목록이 있는 JSON이어야 합니다.']
     by_id = {c['item_id']: c for c in pool}
     options, errors, used = [], [], set()
+    by_name = {c['name']: c['item_id'] for c in pool}
     for option in answer['options']:
         if len(options) == want:
             break
         item_id = option.get('item_id') if isinstance(option, dict) else None
+        # 스키마 없이 답한 모델은 ID를 글자('3089')나 공식 이름으로 쓴다. 후보 안의 같은 아이템이면 받는다.
+        if isinstance(item_id, str):
+            item_id = int(item_id) if item_id.strip().isdigit() else by_name.get(item_id.strip(), item_id)
+        if item_id is None and isinstance(option, dict):
+            item_id = by_name.get(str(option.get('name') or '').strip())
         if item_id not in by_id:
             errors.append('item_id %r는 candidates에 없습니다.' % (item_id,))
         elif item_id in used:
