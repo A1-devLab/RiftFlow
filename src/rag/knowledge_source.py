@@ -67,12 +67,17 @@ class DocumentSource:
         최신 자료도 받지 못하면 빈 목록을 돌려준다. 이름 없이도 롤 용어로는 판정할 수 있다.
         """
         found = self.chunks(patch)
-        if found or patch is None:
+        # 패치 노트만 있고 챔피언·아이템·룬이 없는 경우도 비어 있는 것으로 본다. 게임 패치(26.19)로 물으면
+        # 패치 노트만 맞고 Data Dragon 자료(16.19.1)는 빠져서, '무한의 대검 언제 사?'가 롤 질문 아님으로 막혔다.
+        if patch is None or any(chunk['kind'] in NAME_KINDS for chunk in found):
             return found
         try:
-            return self.chunks(None)
+            return found + [chunk for chunk in self.chunks(None) if chunk['kind'] in NAME_KINDS]
         except Exception:                           # noqa: BLE001
-            return []
+            return found
+
+
+NAME_KINDS = ('champion', 'item', 'rune')
 
 
 def fixture_get_documents(path=DEFAULT_FIXTURE):

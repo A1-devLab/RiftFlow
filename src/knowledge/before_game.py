@@ -5,30 +5,12 @@ import json
 import sqlite3
 from pathlib import Path
 
-
-_catalog_cache = {}
-
-
-def _cached(kind, db_path, builder):
-    """픽창 폴링이 같은 DB를 반복해서 읽지 않도록 파일 변경 시각 기준으로 캐싱한다."""
-    path = Path(db_path)
-    try:
-        stat = path.stat()
-        stamp = (stat.st_mtime_ns, stat.st_size)
-    except OSError:
-        stamp = None
-    key = (kind, str(path))
-    hit = _catalog_cache.get(key)
-    if hit is not None and hit[0] == stamp:
-        return hit[1]
-    value = builder(db_path)
-    _catalog_cache[key] = (stamp, value)
-    return value
+from .documents import cached as _cached, latest_versions
 
 
 def champion_catalog(db_path):
     """Map Data Dragon numeric champion IDs to names and IDs."""
-    return _cached('champion', db_path, _champion_catalog)
+    return _cached('champion-catalog', db_path, _champion_catalog)
 
 
 def _champion_catalog(db_path):
@@ -36,7 +18,8 @@ def _champion_catalog(db_path):
     if not path.exists():
         return {}
     with closing(sqlite3.connect(path)) as db:
-        rows = db.execute("SELECT content FROM records WHERE kind='champion' AND version=(SELECT max(version) FROM records WHERE kind='champion')").fetchall()
+        version = latest_versions(db, {'champion'}).get('champion')
+        rows = db.execute("SELECT content FROM records WHERE kind='champion' AND version=?", (version,)).fetchall()
     catalog = {}
     for (raw,) in rows:
         try:
@@ -57,7 +40,7 @@ def canonical_champion(db_path, name):
 
 
 def rune_catalog(db_path):
-    return _cached('rune', db_path, _rune_catalog)
+    return _cached('rune-catalog', db_path, _rune_catalog)
 
 
 def _rune_catalog(db_path):
@@ -65,7 +48,8 @@ def _rune_catalog(db_path):
     if not path.exists():
         return {}
     with closing(sqlite3.connect(path)) as db:
-        rows = db.execute("SELECT entity_id, name FROM records WHERE kind='rune' AND version=(SELECT max(version) FROM records WHERE kind='rune')").fetchall()
+        version = latest_versions(db, {'rune'}).get('rune')
+        rows = db.execute("SELECT entity_id, name FROM records WHERE kind='rune' AND version=?", (version,)).fetchall()
     return {int(key): name for key, name in rows if str(key).isdigit()}
 
 

@@ -109,7 +109,11 @@ def render_fields(chunk, names=None):
             parts.append('직접 구매 불가')
     elif chunk['kind'] == 'rune':
         if fields.get('tree_name'):
-            parts.append('%s 계열 핵심 룬' % fields['tree_name'])
+            slot = fields.get('slot_index')
+            # 예전에는 모든 룬을 '핵심 룬'이라고 적었다. 핵심 룬은 0번 줄뿐이다.
+            parts.append('%s 계열 핵심 룬' % fields['tree_name'] if slot == 0 else
+                         '%s 계열 %s번째 줄 룬' % (fields['tree_name'], slot) if isinstance(slot, int) else
+                         '%s 계열 룬' % fields['tree_name'])
     elif chunk['kind'] == 'champion':
         if fields.get('ddragon_tags'):
             parts.append('분류 %s' % ', '.join(fields['ddragon_tags']))

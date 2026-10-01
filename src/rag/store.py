@@ -76,10 +76,7 @@ def chunk_document(document, max_chars=MAX_CHARS, overlap_lines=OVERLAP_LINES, h
     """
     lines = split_lines(document['text'])
 
-    if document['kind'] == 'champion':
-        # 패시브와 Q~R 이 한 줄씩이다. 스킬 하나가 청크 하나가 되는 편이 근거로 쓰기 좋다.
-        blocks = [(None, [line]) for line in lines]
-    elif document['kind'] == 'patch':
+    if document['kind'] == 'patch':
         blocks = []
         for name, part in sections(lines, headings or set()):
             for block in pack(part, max_chars, overlap_lines):
@@ -87,7 +84,9 @@ def chunk_document(document, max_chars=MAX_CHARS, overlap_lines=OVERLAP_LINES, h
                     block = [name] + block
                 blocks.append((name, block))
     else:
-        # 아이템과 룬은 짧아서 대개 한 덩어리로 끝난다.
+        # 아이템·룬·챔피언은 짧아서 대개 한 덩어리로 끝난다.
+        # (챔피언을 줄마다 나누던 때는 첫 조각이 이름 한 줄뿐이라 프롬프트에 '아리'만 들어갔다.
+        #  champion.json 요약 파일에는 스킬 설명이 없고 이름·소개·역할만 있다.)
         blocks = [(None, block) for block in pack(lines, max_chars, 0)]
 
     chunks = []

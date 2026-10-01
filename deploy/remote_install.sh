@@ -22,7 +22,7 @@ fi
 cp ~/riftflow/app/deploy/riftflow-api.service ~/riftflow/app/deploy/riftflow-knowledge.service \
    ~/riftflow/app/deploy/riftflow-knowledge.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now riftflow-knowledge.timer >/dev/null 2>&1
+systemctl --user enable --now riftflow-knowledge.timer >/dev/null || echo "자료 갱신 타이머를 켜지 못했습니다: systemctl --user status riftflow-knowledge.timer"
 
 # 공식 자료가 아직 없으면 한 번 바로 받는다 (1분 안팎).
 if [ ! -s ~/riftflow/data/riftflow.db ]; then
@@ -31,12 +31,22 @@ if [ ! -s ~/riftflow/data/riftflow.db ]; then
 fi
 
 if grep -q '^RIOT_API_KEY=.\+' ~/riftflow/server.env; then
-  systemctl --user enable riftflow-api >/dev/null 2>&1
+  systemctl --user enable riftflow-api >/dev/null || echo "API 서비스 자동 시작 설정 실패"
   systemctl --user restart riftflow-api
-  sleep 3
+  # 시작이 느려도 배포를 실패로 끝내지 않게 20초까지 기다린다 (예전에는 3초 뒤 한 번만 확인해 실패로 끝났다).
+  python3 - <<'PY'
+import time, urllib.request
+for _ in range(20):
+    try:
+        print('health:', urllib.request.urlopen('http://127.0.0.1:8787/v1/health', timeout=3).read().decode())
+        break
+    except OSError:
+        time.sleep(1)
+else:
+    print('health: 응답 없음 - journalctl --user -u riftflow-api -n 50 으로 확인하세요')
+PY
   echo "service: $(systemctl --user is-active riftflow-api)"
-  python3 -c "import urllib.request; print('health:', urllib.request.urlopen('http://127.0.0.1:8787/v1/health', timeout=5).read().decode())"
-  grep -q '^GEMINI_API_KEY=.\+' ~/riftflow/server.env || echo "GEMINI_API_KEY가 비어 있어 AI 기능은 꺼져 있습니다."
+  grep -qE '^(GEMINI_API_KEY|HASA_API_KEY)=.+' ~/riftflow/server.env || echo "GEMINI_API_KEY와 HASA_API_KEY가 모두 비어 있어 AI 기능은 꺼져 있습니다."
 else
   echo "RIOT_API_KEY가 비어 있어 서비스를 시작하지 않았습니다."
 fi

@@ -43,16 +43,25 @@ class LcuTests(unittest.TestCase):
     def setUp(self):
         lcu_client._credentials_cache = None
         self.addCleanup(setattr, lcu_client, "_credentials_cache", None)
+        lcu_client._missing_since = None
+        self.addCleanup(setattr, lcu_client, "_missing_since", None)
 
     @patch.object(lcu_client, "_cached_process_alive", return_value=True)
     @patch.object(lcu_client.psutil, "process_iter")
     def test_credentials_are_reused_while_client_process_lives(self, process_iter, _alive):
-        proc = Mock(info={"pid": 7, "name": "LeagueClientUx.exe",
-                          "cmdline": ["--app-port=1234", "--remoting-auth-token=secret"]})
+        proc = Mock(info={"pid": 7, "name": "LeagueClientUx.exe"})
+        proc.cmdline.return_value = ["--app-port=1234", "--remoting-auth-token=secret"]   # 명령줄은 클라이언트만 읽는다
         process_iter.return_value = [proc]
         self.assertEqual(lcu_client._find_lcu_credentials(), (1234, "secret"))
         self.assertEqual(lcu_client._find_lcu_credentials(), (1234, "secret"))
         process_iter.assert_called_once()
+        self.assertEqual(process_iter.call_args.args[0], ["pid", "name"])
+
+    @patch.object(lcu_client.psutil, "process_iter", return_value=[])
+    def test_missing_client_is_remembered_briefly(self, process_iter):
+        self.assertIsNone(lcu_client._find_lcu_credentials())
+        self.assertIsNone(lcu_client._find_lcu_credentials())
+        process_iter.assert_called_once()                    # 롤이 꺼져 있을 때 매 폴링마다 전체를 훑지 않는다
 
     @patch.object(lcu_client, "_find_lcu_credentials", return_value=(1234, "secret"))
     @patch.object(lcu_client, "_lcu_get", return_value="ChampSelect")

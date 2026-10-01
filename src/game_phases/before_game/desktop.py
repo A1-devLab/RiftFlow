@@ -66,7 +66,9 @@ def answer_before_game(db_path, personal_db_path, puuid, view, question, *, gene
     if champion in ('선택 전', ''):
         return {'answer': None, 'message': '내 챔피언을 선택하거나 입력해 주세요.', 'generated': False}
     try:
-        source = DocumentSource(lambda patch=None, kind=None: get_documents(patch, kind, db_path=db_path))
+        item_map = item_map_for(view.get('game_mode'))
+        source = DocumentSource(lambda patch=None, kind=None: get_documents(patch, kind, db_path=db_path,
+                                                                             item_map=item_map))
         chunks = source.chunks(None)
         evidence = search(chunks, f'{champion} {opponent} {question}', top_k=5)
         # Name matches stay available even when lexical search misses the champion.

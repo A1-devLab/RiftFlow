@@ -36,7 +36,7 @@ class MatchAssets(QObject):
         self.cache = {}
         self.inflight = set()
         self.version_requested = False
-        self.catalog_requested = False
+        self.requested = set()      # 받는 중이거나 받은 목록 종류. 실패하면 빼서 다음 요청 때 다시 받는다
 
     def attach(self, label, kind, asset_id):
         if asset_id is None:
@@ -48,7 +48,7 @@ class MatchAssets(QObject):
         if key in self.cache:
             self._display(key)
         elif self.version:
-            self._catalogs()
+            self._catalogs(kind)
             self._icon(key)
         elif not self.version_requested:
             self.version_requested = True
@@ -70,27 +70,30 @@ class MatchAssets(QObject):
             if not version or not all(c.isdigit() or c == '.' for c in version):
                 return
             self.version = version
-            self._catalogs()
+            for kind in {key[0] for key in self.pending} - {'profile'}:
+                self._catalogs(kind)
             for key in list(self.pending):
                 if key[0] == 'profile':
                     self._icon(key)
         except (ValueError, IndexError, TypeError):
             self.version_requested = False
 
-    def _catalogs(self):
-        if self.catalog_requested:
-            return
-        self.catalog_requested = True
-        self._get(f'{BASE}/cdn/{self.version}/data/ko_KR/summoner.json', self._spells)
-        self._get(f'{BASE}/cdn/{self.version}/data/ko_KR/runesReforged.json', self._perks)
-        self._get(f'{BASE}/cdn/{self.version}/data/ko_KR/item.json', self._items)
+    def _catalogs(self, kind=None):
+        """필요한 종류의 목록만 받는다. 예전에는 실패한 목록도 '받음'으로 남아 앱을 다시 켤 때까지 아이콘이 안 나왔다."""
+        files = {'spell': ('summoner.json', self._spells), 'rune': ('runesReforged.json', self._perks),
+                 'item': ('item.json', self._items)}
+        for name, (filename, callback) in files.items():
+            if (kind is None or name == kind) and name not in self.requested:
+                self.requested.add(name)
+                self._get(f'{BASE}/cdn/{self.version}/data/ko_KR/{filename}', callback)
 
     def _spells(self, data):
         try:
             catalog = json.loads(data)['data'].values()
             self.spells = {int(row['key']): (row['image']['full'], row['name']) for row in catalog}
         except (ValueError, KeyError, TypeError):
-            self.spells = {}
+            self.spells = None
+            self.requested.discard('spell')
         for key in list(self.pending):
             if key[0] == 'spell':
                 self._icon(key)
@@ -103,7 +106,8 @@ class MatchAssets(QObject):
             # 룬 트리(정밀, 지배 …) 아이콘도 같은 'rune' 종류로 보여 준다. 트리 ID와 룬 ID는 겹치지 않는다.
             self.perks.update({style['id']: (style['icon'], style['name']) for style in catalog})
         except (ValueError, KeyError, TypeError):
-            self.perks = {}
+            self.perks = None
+            self.requested.discard('rune')
         for key in list(self.pending):
             if key[0] == 'rune':
                 self._icon(key)
@@ -113,7 +117,8 @@ class MatchAssets(QObject):
             catalog = json.loads(data)['data']
             self.items = {int(key): (row['image']['full'], row['name']) for key, row in catalog.items()}
         except (ValueError, KeyError, TypeError):
-            self.items = {}
+            self.items = None
+            self.requested.discard('item')
         for key in list(self.pending):
             if key[0] == 'item':
                 self._icon(key)

@@ -11,9 +11,14 @@ SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10)
 [ -n "${RIFTFLOW_KNOWN_HOSTS:-}" ] && SSH_OPTS+=(-o "UserKnownHostsFile=$RIFTFLOW_KNOWN_HOSTS")
 
 cd "$(dirname "$0")/.."
-# 1) 파일 올리기: 이전 코드는 지우고 새로 푼다 (지운 파일이 서버에 남지 않게)
+# 1) 파일 올리기: 새 폴더에 다 받은 뒤에만 바꿔 끼운다 (지운 파일이 서버에 남지 않게).
+#    예전에는 기존 코드를 먼저 지우고 받아서, 전송이 끊기면 서버에 코드가 반쯤만 남았다.
 tar czf - --exclude='__pycache__' pyproject.toml src/contracts src/riot src/server src/knowledge src/rag src/game_phases src/ui deploy \
   | ssh "${SSH_OPTS[@]}" "$HOST" \
-    'mkdir -p ~/riftflow/app && rm -rf ~/riftflow/app/src ~/riftflow/app/deploy && tar xzf - -C ~/riftflow/app'
+    'set -e; rm -rf ~/riftflow/app.new && mkdir -p ~/riftflow/app.new && tar xzf - -C ~/riftflow/app.new
+     test -f ~/riftflow/app.new/src/server/app.py
+     rm -rf ~/riftflow/app.old
+     if [ -d ~/riftflow/app ]; then mv ~/riftflow/app ~/riftflow/app.old; fi
+     mv ~/riftflow/app.new ~/riftflow/app'
 # 2) 설치와 재시작: 방금 올린 스크립트를 서버에서 실행
 ssh "${SSH_OPTS[@]}" "$HOST" 'bash ~/riftflow/app/deploy/remote_install.sh'

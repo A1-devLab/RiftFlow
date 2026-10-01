@@ -45,6 +45,12 @@ CREATE TABLE IF NOT EXISTS rune_recommendations (
     result TEXT NOT NULL,
     created_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ai_usage (
+    scope TEXT NOT NULL,
+    day TEXT NOT NULL,
+    requests INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (scope, day)
+);
 CREATE TABLE IF NOT EXISTS matches (
     match_id TEXT PRIMARY KEY,
     game_start INTEGER,
@@ -101,16 +107,49 @@ class Database:
             return db.execute("SELECT riot_requests FROM usage_daily WHERE device_id=? AND day=?",
                               (device_id, day)).fetchone()[0]
 
-    def ai_requests(self, device_id, day):
-        row = self.one("SELECT ai_requests FROM usage_daily WHERE device_id=? AND day=?", (device_id, day))
-        return row["ai_requests"] if row else 0
+    def reserve_ai(self, scopes, day):
+        """[(범위, 한도)]마다 오늘 AI 요청 1회를 한 번에 예약한다. 하나라도 한도면 아무것도 늘리지 않고 그 범위를 돌려준다.
 
-    def count_ai(self, device_id, day, amount):
-        if amount <= 0:
+        예전에는 '읽고 비교한 뒤 끝나면 더하기'라서, 같은 기기가 동시에 10번 보내면 한도 2에서도 10번 다 통과했다.
+        한 트랜잭션(BEGIN IMMEDIATE) 안에서 확인과 증가를 같이 해서 동시에 와도 한도를 넘지 않는다.
+        """
+        with closing(self.connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                for scope, limit in scopes:
+                    db.execute("INSERT OR IGNORE INTO ai_usage (scope, day, requests) VALUES (?, ?, 0)", (scope, day))
+                    used = db.execute("SELECT requests FROM ai_usage WHERE scope=? AND day=?", (scope, day)).fetchone()[0]
+                    if used >= limit:
+                        db.rollback()
+                        return scope
+                for scope, _limit in scopes:
+                    db.execute("UPDATE ai_usage SET requests = requests + 1 WHERE scope=? AND day=?", (scope, day))
+                db.commit()
+                return None
+            except Exception:
+                db.rollback()
+                raise
+
+    def adjust_ai(self, scopes, day, delta):
+        """예약한 1회를 실제 호출 수로 맞춘다 (모델을 안 불렀으면 -1, 재시도까지 3번 불렀으면 +2)."""
+        if not delta:
             return
-        self.run("""INSERT INTO usage_daily (device_id, day, riot_requests, ai_requests) VALUES (?, ?, 0, ?)
-                    ON CONFLICT(device_id, day) DO UPDATE SET ai_requests = ai_requests + excluded.ai_requests""",
-                 (device_id, day, amount))
+        with closing(self.connect()) as db, db:
+            for scope in scopes:
+                db.execute("UPDATE ai_usage SET requests = MAX(0, requests + ?) WHERE scope=? AND day=?",
+                           (delta, scope, day))
+
+    def cleanup(self, now, day_cutoff):
+        """오래된 캐시와 사용량을 지운다. 경기 원본(수십 KB)을 영원히 쌓아 미니 PC 디스크가 차지 않게 한다."""
+        day = 86400
+        with closing(self.connect()) as db, db:
+            db.execute("DELETE FROM matches WHERE fetched_at < ?", (now - 30 * day,))
+            for table in ("riot_accounts", "league_entries", "player_match_lists"):
+                db.execute(f"DELETE FROM {table} WHERE fetched_at < ?", (now - 7 * day,))
+            db.execute("DELETE FROM rune_recommendations WHERE created_at < ?", (now - 14 * day,))
+            db.execute("DELETE FROM usage_daily WHERE day < ?", (day_cutoff,))
+            db.execute("DELETE FROM ai_usage WHERE day < ?", (day_cutoff,))
+            db.execute("DELETE FROM devices WHERE last_seen_at < ?", (now - 90 * day,))
 
     def rune_cache(self, cache_key):
         row = self.one("SELECT result FROM rune_recommendations WHERE cache_key=?", (cache_key,))

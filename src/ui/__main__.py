@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QStackedWidget, QTextBrowser, QVBoxLayout, QWidget,
 )
 
-from knowledge.documents import get_documents
+from knowledge.documents import has_records
 from rag.config import load_env
 from rag import llm
 from rag.llm import generate
@@ -28,6 +28,8 @@ from knowledge.in_game import item_catalog
 from .pages.out_game import OutGamePage
 from .pages.before_game import BeforeGamePage
 from .pages.in_game import InGamePage
+from .match_assets import MatchAssets
+from .portraits import ChampionPortraits
 from .match_detail import MatchDetailDialog
 from .services import ask_general, create_demo, profile_context, sync_database
 from .chat_history import SCREEN_NAMES, ChatHistory
@@ -95,17 +97,23 @@ def collect_phase(db_path):
     """게임 단계를 한 번에 판별한다: in_game / loading / champ_select / idle.
 
     단계마다 타이머를 따로 두면 LCU·Live Client 호출이 겹치므로 폴러 하나로 합쳤다.
+
+    클라이언트 단계를 먼저 묻는다. 예전에는 매번 Live Client(2999)부터 물어서, 게임 밖에서도
+    연결 시간 초과(1초)를 기다린 뒤에야 픽창을 읽었다. 이제 Live Client는 게임 단계이거나
+    클라이언트를 못 찾았을 때만(클라이언트 없이 게임만 떠 있는 경우) 짧게 확인한다.
     """
-    state = get_live_state()
-    if state.status is LiveMatchStatus.IN_GAME:
-        view = describe_scoreboard(get_in_game_context(state), item_catalog(db_path))
-        if view.get('in_game'):
-            return {'phase': 'in_game', 'view': view}
-    if get_gameflow_phase() in LOADING_FLOWS:
-        return {'phase': 'loading'}
-    session = get_before_game_context()
-    if session is not None:
-        return {'phase': 'champ_select', 'session': session, 'catalog': champion_catalog(db_path)}
+    flow = get_gameflow_phase()
+    if flow in LOADING_FLOWS or flow is None:
+        state = get_live_state(timeout=1.0 if flow else 0.3)
+        if state.status is LiveMatchStatus.IN_GAME:
+            view = describe_scoreboard(get_in_game_context(state), item_catalog(db_path))
+            if view.get('in_game'):
+                return {'phase': 'in_game', 'view': view}
+        return {'phase': 'loading'} if flow else {'phase': 'idle'}
+    if flow == 'ChampSelect':
+        session = get_before_game_context()
+        if session is not None:
+            return {'phase': 'champ_select', 'session': session, 'catalog': champion_catalog(db_path)}
     return {'phase': 'idle'}
 
 
@@ -127,6 +135,7 @@ class Job(QThread):
 
 class Window(QMainWindow):
     riot_login_detected = Signal(object)
+    riot_login_failed = Signal(str)
 
     def __init__(self, data_dir, auto_sync=False):
         super().__init__()
@@ -140,13 +149,16 @@ class Window(QMainWindow):
         self.riot_context = None
         self.match_cache = {}
         self.login_watcher = None
+        # 화면 셋이 아이콘 목록·그림을 따로 받지 않도록 하나를 함께 쓴다 (예전에는 같은 파일을 세 번 받았다).
+        self.assets, self.portraits = MatchAssets(self), ChampionPortraits(self)
+        self.poll_failures = self.live_misses = 0
+        self.matchup_key = None
         self.personal_path = self.data_dir / "personal_matches.db"
         # AI 대화 기록은 이 PC에만 저장한다. 일반 질문은 앱을 다시 켜도 마지막 대화를 이어 가고,
         # 픽창·인게임 대화는 픽창·게임마다 새로 시작한다.
         self.chats = ChatHistory(self.data_dir / "chat_history.db")
         self.chat_ids = {'general': self.chats.latest('general'), 'pick': None, 'in_game': None}
         self.poll_job = None
-        self.champ_session_active = False
         self.phase = 'idle'
         self.rune_cache = {}          # 같은 챔피언·상대·성향이면 다시 부르지 않는다 (Gemini 하루 호출 한도)
         self.rune_candidate = None    # 직전 폴링에서 본 조건. 두 번 연속 같으면 자동 추천
@@ -200,7 +212,7 @@ class Window(QMainWindow):
         if self.chat_ids['general']:
             self.out_game.load_history(self.chats.messages(self.chat_ids['general']))
         try:
-            has_live_data = self.live_path.exists() and bool(get_documents(db_path=self.live_path))
+            has_live_data = self.live_path.exists() and has_records(self.live_path)
         except Exception:
             has_live_data = False
         if has_live_data:
@@ -210,6 +222,7 @@ class Window(QMainWindow):
             # 배포판 첫 실행: 공식 자료가 없으면 알아서 받는다 (설정 화면을 찾을 필요 없게).
             QTimer.singleShot(1500, self.sync_data)
         self.riot_login_detected.connect(self.on_riot_login_detected)
+        self.riot_login_failed.connect(self.out_game.show_unavailable)
         self.champ_timer = QTimer(self)
         self.champ_timer.setInterval(2500)
         self.champ_timer.timeout.connect(self.poll_champ_select)
@@ -217,10 +230,12 @@ class Window(QMainWindow):
         QTimer.singleShot(800, self.poll_champ_select)
         # 배포판은 라이엇 키 없이 RiftFlow 서버를 쓰므로 둘 중 하나만 있어도 전적을 불러온다.
         if os.environ.get('RIOT_API_KEY') or os.environ.get('RIFTFLOW_SERVER_URL'):
-            self.login_watcher = start_login_watcher(self.riot_login_detected.emit)
+            self.login_watcher = start_login_watcher(self.riot_login_detected.emit,
+                                                     on_error=self.riot_login_failed.emit)
             self.status.setText('롤 클라이언트 로그인을 자동으로 기다리고 있습니다.')
         else:
-            self.out_game.rank.setText('Riot API 키를 설정하면 롤 클라이언트 로그인을 자동 감지합니다.')
+            # 예전에는 이 문장을 숨겨진 로딩 화면 뒤에 써서 'Loading …'만 끝없이 보였다.
+            self.out_game.show_unavailable('Riot API 키를 설정하면 롤 클라이언트 로그인을 자동 감지합니다.')
 
     def page(self, title, subtitle):
         widget = QWidget()
@@ -233,14 +248,14 @@ class Window(QMainWindow):
         return layout
 
     def make_home(self):
-        self.out_game = OutGamePage()
+        self.out_game = OutGamePage(assets=self.assets, portraits=self.portraits)
         self.out_game.askRequested.connect(self.ask_out_game)
         self.out_game.profileRequested.connect(self.load_riot_profile)
         self.out_game.matchRequested.connect(self.load_match_detail)
         self.stack.addWidget(self.out_game)
 
     def make_before_game(self):
-        self.before_game = BeforeGamePage()
+        self.before_game = BeforeGamePage(assets=self.assets, portraits=self.portraits)
         self.before_game.askRequested.connect(self.ask_before_game)
         self.before_game.runeRequested.connect(self.request_runes)
         self.before_game.runeApplyRequested.connect(self.apply_runes)
@@ -249,7 +264,7 @@ class Window(QMainWindow):
         self.stack.addWidget(self.before_game)
 
     def make_in_game(self):
-        self.in_game = InGamePage()
+        self.in_game = InGamePage(assets=self.assets, portraits=self.portraits)
         self.in_game.askRequested.connect(self.ask_in_game)
         self.in_game.refreshRequested.connect(self.poll_champ_select)
         self.stack.addWidget(self.in_game)
@@ -262,19 +277,35 @@ class Window(QMainWindow):
         job = Job(lambda: collect_phase(path), self)
         self.poll_job = job
         job.result.connect(self.on_phase)
-        job.failed.connect(lambda _message: self.before_game.show_disconnected())
+        job.failed.connect(self.on_poll_failed)
         job.finished.connect(self.finish_champ_poll)
         job.start()
+
+    def on_poll_failed(self, _message):
+        """폴링 한 번 실패로 픽창 입력(챔피언)을 지우면 추천 룬까지 버려졌다. 몇 번 연속 실패할 때만 대기로 본다."""
+        self.poll_failures += 1
+        if self.poll_failures >= 3 and not self.closing:
+            self.status.setText('롤 클라이언트 상태를 읽지 못하고 있습니다. 클라이언트를 확인해 주세요.')
+            self.on_phase({'phase': 'idle'})
 
     def on_phase(self, payload):
         if self.closing:
             return
+        self.poll_failures = 0
+        # 게임 중 Live Client 응답을 한 번 놓치면 로딩으로 보였다가 스코어보드와 추천 아이템이 지워졌다.
+        # 게임 중에서 로딩으로 바뀐 경우는 두 번까지 직전 화면을 유지한다.
+        if payload['phase'] == 'loading' and self.phase == 'in_game' and self.live_misses < 2:
+            self.live_misses += 1
+            return
+        self.live_misses = 0
         phase, previous = payload['phase'], self.phase
         self.phase = phase
         if phase == 'champ_select' and previous != 'champ_select':
-            # 새 픽창: 채팅으로 말한 성향, 적용 기록, 픽창 대화를 새로 시작한다.
+            # 새 픽창: 채팅으로 말한 성향, 적용 기록, 픽창 대화, 자동 추천 상태를 새로 시작한다.
+            # (rune_shown_key를 지우지 않아 같은 챔피언으로 다음 픽창에 들어가면 자동 추천이 멈췄다.)
             self.before_game.reset_conversation()
             self.rune_applied_page = None
+            self.rune_candidate = self.rune_shown_key = self.pending_rune_apply = None
             self.chat_ids['pick'] = None
             self.before_game.answer.setPlainText('픽창에서 궁금한 점을 물어보세요. 이번 픽창의 대화는 이어서 기억합니다.')
         if phase in ('loading', 'in_game') and previous not in ('loading', 'in_game'):
@@ -285,7 +316,6 @@ class Window(QMainWindow):
             self.on_champ_select((payload['session'], payload['catalog']))
         else:
             self.before_game.show_disconnected()
-            self.champ_session_active = False
         if phase == 'in_game':
             self.in_game.show_view(payload['view'])
         elif phase == 'loading':
@@ -371,11 +401,9 @@ class Window(QMainWindow):
         session, catalog = payload
         if session is None:
             self.before_game.show_disconnected()
-            self.champ_session_active = False
             return
         view = describe_session(session, catalog)
         self.before_game.show_session(view)
-        self.champ_session_active = True
         self.update_personal_matchup()
         self.maybe_auto_recommend()
 
@@ -397,7 +425,9 @@ class Window(QMainWindow):
             self.rune_candidate = None
             return
         key = self.rune_key(request)
-        if key == self.rune_shown_key:
+        if key == self.rune_shown_key and (self.before_game.rune_page is not None or key not in self.rune_cache):
+            # 이미 보여 주는 중이거나, 이 조건의 자동 요청이 실패한 경우(반복하지 않음).
+            # 챔피언을 바꿨다 돌아와 화면의 추천이 버려졌으면 저장해 둔 추천을 다시 보여 준다.
             return
         if key != self.rune_candidate:
             self.rune_candidate = key
@@ -408,7 +438,8 @@ class Window(QMainWindow):
             return
         self.request_runes(request)
 
-    def update_personal_matchup(self):
+    def update_personal_matchup(self, force=False):
+        """개인 상성 문구. 픽창 폴링(2.5초)마다 개인 기록 DB를 다시 읽지 않도록 조건이 바뀔 때만 계산한다."""
         if not self.riot_context:
             return
         view = self.before_game.view
@@ -418,6 +449,10 @@ class Window(QMainWindow):
         from game_phases.before_game.desktop import opponent_for_lane
         opponent = self.before_game.opponent.text().strip() or opponent_for_lane(view)
         lane = (view.get('mine') or {}).get('position')
+        key = (self.riot_context['player'].puuid, champion, opponent, lane)
+        if key == self.matchup_key and not force:
+            return
+        self.matchup_key = key
         summary = personal_context(self.personal_path, self.riot_context['player'].puuid,
                                    canonical_champion(self.db_path, champion),
                                    canonical_champion(self.db_path, opponent), lane)
@@ -463,6 +498,7 @@ class Window(QMainWindow):
         self.start_job(
             work,
             lambda result: self.show_before_game_answer(result, request['question']),
+            on_error=self.before_game.answer.setPlainText,
         )
 
     def request_runes(self, request):
@@ -628,11 +664,6 @@ class Window(QMainWindow):
     def reload(self, *_):
         if not hasattr(self, 'connection'):
             return
-        try:
-            self.documents = get_documents(db_path=self.db_path)
-        except Exception:
-            self.documents = []
-            self.status.setText('DB를 읽지 못했습니다. 파일 상태를 확인하세요.')
         riot = ('RiftFlow 서버' if os.environ.get('RIFTFLOW_SERVER_URL') else
                 'Riot 키 ' + ('설정됨' if os.environ.get('RIOT_API_KEY') else '미설정'))
         ai = 'RiftFlow 서버' if os.environ.get('RIFTFLOW_SERVER_URL') else (
@@ -640,6 +671,8 @@ class Window(QMainWindow):
         self.connection.setText('AI: %s  ·  전적: %s' % (ai, riot))
 
     def start_job(self, function, callback, on_error=None):
+        if self.closing:
+            return              # 닫는 중에는 새 작업(대기 중이던 룬 적용·전적 새로고침)을 시작하지 않는다
         job = Job(function, self)
         self.jobs.append(job)
         self.send.setEnabled(False)
@@ -673,10 +706,11 @@ class Window(QMainWindow):
             QTimer.singleShot(0, lambda: self.load_riot_profile(player))
 
     def failed(self, message):
+        """작업 실패는 상태줄에만 쓴다. 화면별 안내는 작업을 시작한 쪽이 on_error로 넘긴다.
+
+        예전에는 모든 실패를 네 화면에 한꺼번에 써서, 룬 적용 실패가 픽창 대화와 AI 질문 화면을 덮어썼다.
+        """
         self.status.setText(message)
-        self.reply.setPlainText(message)
-        self.before_game.answer.setPlainText(message)
-        self.out_game.show_error(message)
 
     def ask_out_game(self, question):
         if self.jobs:
@@ -689,7 +723,8 @@ class Window(QMainWindow):
         self.status.setText('AI 답변을 준비하고 있습니다.')
         history = self.chat_context('general')
         self.start_job(lambda: self.general_answer(path, question, profile, model, history),
-                       lambda result: self.show_out_game_answer(result, question))
+                       lambda result: self.show_out_game_answer(result, question),
+                       on_error=self.out_game.show_error)
 
     def general_answer(self, path, question, profile, model, history=None):
         server = self.server()
@@ -728,14 +763,15 @@ class Window(QMainWindow):
         if self.jobs:
             return
         self.status.setText('롤 클라이언트와 최근 전적을 확인하고 있습니다.')
-        self.start_job(lambda: self.riot_profile(player), self.show_riot_profile)
+        self.start_job(lambda: self.riot_profile(player), self.show_riot_profile,
+                       on_error=self.out_game.show_unavailable)
 
     def show_riot_profile(self, payload):
         self.riot_context = payload
         self.out_game.show_profile(payload)
         self.match_cache.update({d.get('metadata', {}).get('matchId'): d
                                  for d in payload.get('details', []) if d.get('metadata', {}).get('matchId')})
-        self.update_personal_matchup()
+        self.update_personal_matchup(force=True)        # 새 전적이 저장됐으니 같은 조건이라도 다시 계산
         self.status.setText('로그인한 플레이어와 최근 전적을 불러왔습니다.')
 
     def load_match_detail(self, match_id):
@@ -771,7 +807,8 @@ class Window(QMainWindow):
         history = self.chat_context('general')
         self.question.clear()
         self.start_job(lambda: self.general_answer(path, question, profile, model, history),
-                       lambda result: self.show_answer(result, question))
+                       lambda result: self.show_answer(result, question),
+                       on_error=self.reply.setPlainText)
 
     def show_answer(self, result, question=None):
         text = self.answer_text(result) or ('질문에 맞는 자료를 확인하지 못했습니다.'
@@ -854,12 +891,20 @@ class Window(QMainWindow):
 
     def closeEvent(self, event):
         if self.jobs:
-            self.status.setText('진행 중인 작업이 끝난 뒤 종료할 수 있습니다.')
+            # 예전에는 작업(느린 AI 답변, 자료 업데이트)이 끝날 때까지 창을 닫을 수 없었다.
+            # 창은 바로 숨기고, 실행 중인 스레드가 끝나면 그때 실제로 닫는다 (실행 중인 QThread를 지우면 앱이 죽는다).
+            self.closing = True
+            self.champ_timer.stop()
+            self.hide()
+            for job in self.jobs:
+                job.finished.connect(self.close, Qt.QueuedConnection)
             event.ignore()
             return
         # 폴링 스레드가 끝난 뒤 다시 닫는다. 실행 중인 QThread를 지우면 앱이 비정상 종료된다.
         self.closing = True
         self.champ_timer.stop()
+        if self.login_watcher is not None:
+            self.login_watcher.stop()
         if self.poll_job is not None and self.poll_job.isRunning():
             self.poll_job.finished.connect(self.close)
             event.ignore()

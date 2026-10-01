@@ -178,19 +178,19 @@ class BeforeGamePage(QWidget):
     refreshRequested = Signal()
     personalContextChanged = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, assets=None, portraits=None, parent=None):
         super().__init__(parent)
         self.setObjectName('beforeGame')
         self.setStyleSheet(STYLE)
         self.auto_champion = ''
         self.auto_opponent = ''
         self.view = {'mine': None, 'allies': [], 'enemies': [], 'ally_bans': [], 'enemy_bans': []}
-        self.assets = MatchAssets(self)
+        self.assets = assets or MatchAssets(self)
         self.rune_champion = None
         self.rune_page = None
         self.busy = False
         self.user_requests = []   # 이번 픽창에서 사용자가 채팅으로 한 말. 성향은 여기서 읽는다.
-        self.portraits = ChampionPortraits(self)
+        self.portraits = portraits or ChampionPortraits(self)
         root = QVBoxLayout(self)
         root.setSpacing(13)
         header = QHBoxLayout()

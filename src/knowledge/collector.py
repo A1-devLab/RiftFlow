@@ -138,6 +138,21 @@ def rune_rows(data):
             for tree in data for index, slot in enumerate(tree['slots']) for rune in slot['runes']]
 
 
+KEEP_VERSIONS = 2
+
+
+def prune_versions(db, kind, keep=KEEP_VERSIONS):
+    """Data Dragon 자료(챔피언·아이템·룬)는 최근 버전 keep개만 남긴다. 패치 노트는 지우지 않는다.
+
+    업데이트할 때마다 전체 사본이 쌓여 DB가 커지고, 읽는 쪽도 느려졌다.
+    """
+    from .documents import version_key
+    versions = sorted({row[0] for row in db.execute('SELECT DISTINCT version FROM records WHERE kind=?', (kind,))},
+                      key=version_key, reverse=True)
+    for old in versions[keep:]:
+        db.execute('DELETE FROM records WHERE kind=? AND version=?', (kind, old))
+
+
 def update(db, limit=3):
     if not isinstance(limit, int) or not 1 <= limit <= 12:
         raise ValueError('패치 수는 1~12여야 합니다.')
@@ -158,6 +173,7 @@ def update(db, limit=3):
                 rows = data['data'].items()
             for entity_id, entity in rows:
                 add(kind, version, entity_id, entity['name'], json.dumps(entity, ensure_ascii=False, sort_keys=True), url)
+            prune_versions(db, kind)
 
         listing = Page(fetch(PATCH_LIST))
         urls = []

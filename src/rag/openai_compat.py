@@ -25,8 +25,12 @@ from .gemini import GeminiError, parse_seconds
 DEFAULT_BASE_URL = 'https://open.hasa.re.kr/v1'
 DEFAULT_MODEL = 'qwen3-next-80b'
 BLOCK_SECONDS = 600
-_blocked = {}              # 모델 → 다시 시도할 시각 (키에 권한이 없던 모델)
-TIMEOUT = 150             # 공용 GPU가 붐비면 추론형 모델(gpt-oss) 룬 추천이 90초를 넘긴 적이 있다
+_blocked = {}              # 모델 → 다시 시도할 시각 (권한 없음·한도·시간 초과가 났던 모델)
+SLOT_WAIT = 8              # 다른 요청이 HASA를 쓰는 중이면 이만큼만 기다리고 Gemini로 넘긴다
+RPM_LIMIT = 10             # HASA 개발키 분당 한도. 넘길 것 같으면 보내지 않고 Gemini로 넘긴다
+_sent = []                 # 최근 1분 동안 보낸 시각
+_sent_lock = threading.Lock()
+TIMEOUT = 90              # 넘기면 Gemini로 넘어간다. 앱은 AI 요청을 180초까지 기다린다 (api_client.coach.AI_TIMEOUT)
 MAX_WAIT = 20              # 429에 Retry-After가 이보다 짧으면 기다렸다 한 번 더 보낸다 (동시·분당 한도)
 DEFAULT_CONFIG = {'temperature': 0.2, 'maxOutputTokens': 4096}
 _slots = threading.BoundedSemaphore(max(1, int(os.environ.get('HASA_CONCURRENCY') or 1)))
@@ -87,9 +91,8 @@ def read_text(payload):
     choices = payload.get('choices') or []
     if not choices:
         raise GeminiError('모델이 답변을 돌려주지 않았습니다.')
-    choice = choices[0]
-    reason = choice.get('finish_reason') or '알 수 없음'
-    text = THINK.sub('', (choice.get('message') or {}).get('content') or '').strip()
+    reason = choices[0].get('finish_reason') or '알 수 없음'
+    text = _content(payload)
     if not text:
         raise GeminiError('답변이 비어 있습니다. 종료 사유: %s' % reason)
     return text, reason
@@ -125,8 +128,13 @@ def generate(prompt, model=DEFAULT_MODEL, key=None, config=None, opener=None, re
         if _blocked.get(name, 0) > clock():
             continue                    # 권한 없던 모델: 10분 동안 호출하지 않는다 (매번 403을 받으며 늦어지지 않게)
         try:
-            return _generate(prompt, name, key, config, opener, retries, sleep, base_url)
+            return _generate(prompt, name, key, config, opener, retries, sleep, base_url, clock)
         except GeminiError as failure:
+            if failure.kind in ('quota', 'timeout'):
+                # 하루 한도를 다 썼거나 공용 GPU가 막혀 있으면 10분 동안 바로 Gemini로 넘긴다
+                # (예전에는 매 요청이 한도 응답·시간 초과를 다 기다린 뒤에야 넘어갔다).
+                _blocked[name] = clock() + BLOCK_SECONDS
+                raise
             if failure.kind != 'model_not_allowed':
                 raise
             _blocked[name] = clock() + BLOCK_SECONDS
@@ -134,53 +142,75 @@ def generate(prompt, model=DEFAULT_MODEL, key=None, config=None, opener=None, re
     raise error or GeminiError('이 키로 쓸 수 있는 모델이 없습니다: %s' % ', '.join(models), kind='model_not_allowed')
 
 
+def _reserve_minute(clock):
+    """분당 한도 안에서 한 번 보낼 자리를 잡는다. 없으면 False."""
+    with _sent_lock:
+        now = clock()
+        _sent[:] = [at for at in _sent if at > now - 60]
+        if len(_sent) >= RPM_LIMIT:
+            return False
+        _sent.append(now)
+        return True
+
+
 def _downgrade(body):
     """보낸 형식에서 한 단계 낮춘다: json_schema → json_object → 형식 없음."""
     return 'object' if body.get('response_format', {}).get('type') == 'json_schema' else False
 
 
-def _generate(prompt, model, key, config, opener, retries, sleep, base_url):
+def _send_once(url, body, headers, send, clock):
+    """동시 1건 자리를 잠깐만 기다려 한 번 보낸다. 잠든 채로(재시도 대기) 자리를 쥐고 있지 않게 보낼 때만 잡는다."""
+    if not _slots.acquire(timeout=SLOT_WAIT):
+        raise GeminiError('AI 요청이 몰려 있습니다.', status=503, kind='busy')
+    try:
+        if not _reserve_minute(clock):
+            raise GeminiError('분당 AI 요청 한도에 가깝습니다.', status=429, kind='busy')
+        return _post(url, body, headers, send)
+    finally:
+        _slots.release()
+
+
+def _generate(prompt, model, key, config, opener, retries, sleep, base_url, clock=time.time):
     url = (base_url or os.environ.get('HASA_BASE_URL') or DEFAULT_BASE_URL).rstrip('/') + '/chat/completions'
     headers = {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + api_key(key)}
     send = opener or urllib.request.urlopen
     json_mode = True
     attempt = 0
-    with _slots:
-        while True:
-            body = build_request(prompt, model, config, json_mode)
-            try:
-                payload = _post(url, body, headers, send)
-                if 'response_format' in body and not _content(payload):
-                    # 스키마를 걸면 빈 답을 주는 모델이 있다 (gpt-oss: 추론 형식과 충돌). 한 단계 낮춰 다시 보낸다.
-                    # 형식을 아예 빼면 gpt-oss는 JSON 대신 글로 답하므로 json_object를 먼저 시도한다.
-                    json_mode = _downgrade(body)
-                    continue
-                break
-            except urllib.error.HTTPError as error:
-                detail = error.read().decode('utf-8', 'replace')
-                # 형식을 지원하지 않는 모델이면 한 단계씩 낮춰 다시 보낸다 (형식은 프롬프트와 코드 검증이 지킨다).
-                if error.code == 400 and 'response_format' in body and 'response_format' in detail:
-                    json_mode = _downgrade(body)
-                    continue
-                failure = classify(error.code, detail, model)
-                wait = parse_seconds(error.headers.get('Retry-After')) if error.headers else None
-                failure.retry_after = wait
-                retryable = error.code in (429, 500, 502, 503, 504)
-                if retryable and attempt < retries and (wait or 3) <= MAX_WAIT:
-                    attempt += 1
-                    sleep(wait or 3)
-                    continue
-                raise failure
-            except urllib.error.URLError as error:
-                if attempt < retries:
-                    attempt += 1
-                    sleep(3)
-                    continue
-                raise GeminiError('AI 서버에 연결하지 못했습니다: %s' % error.reason)
-            except (TimeoutError, OSError, http.client.HTTPException, ValueError) as error:
-                # 읽기 시간 초과·연결 끊김·깨진 본문. 시간 초과를 다시 보내면 같은 시간을 또 기다리므로 재시도하지 않는다.
-                raise GeminiError('AI 응답이 늦거나 끊겼습니다 (%s). 공용 GPU가 붐비는 중일 수 있으니 잠시 뒤 다시 시도하세요.'
-                                  % type(error).__name__)
+    while True:
+        body = build_request(prompt, model, config, json_mode)
+        try:
+            payload = _send_once(url, body, headers, send, clock)
+            if 'response_format' in body and not _content(payload):
+                # 스키마를 걸면 빈 답을 주는 모델이 있다 (gpt-oss: 추론 형식과 충돌). 한 단계 낮춰 다시 보낸다.
+                # 형식을 아예 빼면 gpt-oss는 JSON 대신 글로 답하므로 json_object를 먼저 시도한다.
+                json_mode = _downgrade(body)
+                continue
+            break
+        except urllib.error.HTTPError as error:
+            detail = error.read().decode('utf-8', 'replace')
+            # 형식을 지원하지 않는 모델이면 한 단계씩 낮춰 다시 보낸다 (형식은 프롬프트와 코드 검증이 지킨다).
+            if error.code == 400 and 'response_format' in body and 'response_format' in detail:
+                json_mode = _downgrade(body)
+                continue
+            failure = classify(error.code, detail, model)
+            wait = parse_seconds(error.headers.get('Retry-After')) if error.headers else None
+            failure.retry_after = wait
+            retryable = error.code in (429, 500, 502, 503, 504)
+            if retryable and attempt < retries and (wait or 3) <= MAX_WAIT:
+                attempt += 1
+                sleep(wait or 3)
+                continue
+            raise failure
+        except urllib.error.URLError as error:
+            if attempt < retries:
+                attempt += 1
+                sleep(3)
+                continue
+            raise GeminiError('AI 서버에 연결하지 못했습니다: %s' % error.reason)
+        except (TimeoutError, OSError, http.client.HTTPException, ValueError) as error:
+            # 읽기 시간 초과·연결 끊김·깨진 본문. 시간 초과를 다시 보내면 같은 시간을 또 기다리므로 재시도하지 않는다.
+            raise GeminiError('AI 응답이 늦거나 끊겼습니다 (%s). 공용 GPU가 붐비는 중일 수 있으니 잠시 뒤 다시 시도하세요.'
+                              % type(error).__name__, kind='timeout')
     usage = payload.get('usage') or {}
     text, reason = read_text(payload)
     return {'text': text, 'model': model, 'finish_reason': reason, 'truncated': reason == 'length',

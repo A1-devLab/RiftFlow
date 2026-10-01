@@ -5,6 +5,7 @@ LLM이 고른 룬 페이지를 클라이언트가 받아들일 수 있는지 여
 """
 import json
 import sqlite3
+import time
 from contextlib import closing
 from pathlib import Path
 
@@ -54,6 +55,10 @@ def rune_trees(db_path):
     return trees
 
 
+DOWNLOAD_RETRY = 300
+_download_failed = {}
+
+
 def ensure_rune_trees(db_path, *, fetch=None):
     """룬 트리 구조가 없으면 DB에 있는 룬 버전의 runesReforged.json만 받아 채운다.
 
@@ -64,6 +69,10 @@ def ensure_rune_trees(db_path, *, fetch=None):
     trees = rune_trees(db_path)
     if trees is not None:
         return trees
+    # 오프라인이면 받기가 30초씩 걸리는데, 자동 추천마다 다시 시도했다. 실패는 5분 동안 기억한다.
+    failed = _download_failed.get(str(db_path))
+    if failed is not None and time.monotonic() - failed < DOWNLOAD_RETRY:
+        return None
     from .collector import DDRAGON, connect, fetch as download, rune_rows, save
     fetch = fetch or download
     try:
@@ -81,6 +90,7 @@ def ensure_rune_trees(db_path, *, fetch=None):
                 save(db, 'rune', version, rune_id, entity['name'],
                      json.dumps(entity, ensure_ascii=False, sort_keys=True), url)
     except (OSError, ValueError, KeyError, IndexError, TypeError, sqlite3.Error):
+        _download_failed[str(db_path)] = time.monotonic()
         return None
     return rune_trees(db_path)
 

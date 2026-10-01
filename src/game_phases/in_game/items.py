@@ -188,7 +188,10 @@ def recommend_items(db_path, view, question, *, generate, prompt_player):
                 'message': '추천 근거로 쓸 공식 아이템 자료가 없습니다. 설정 및 데이터에서 공식 자료를 먼저 업데이트해 주세요.'}
     me = view.get('me')
     enemies = view.get('enemies') or []
-    profiles = champion_profiles(db_path)
+    try:
+        profiles = champion_profiles(db_path)
+    except (sqlite3.Error, OSError, ValueError):
+        profiles = {}
     composition = team_composition([e['champion'] for e in enemies], profiles)
     mine = profiles.get(str((me or {}).get('champion', '')).casefold())
     pool = candidates(items, me, composition, mine.get('damage_rating') if mine else None)

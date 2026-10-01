@@ -9,7 +9,9 @@ from collections import deque
 from dataclasses import asdict
 from urllib.parse import quote
 
-from contracts.riot import RateLimitExceeded
+import requests
+
+from contracts.riot import RateLimitExceeded, RiotApiError
 from riot.client import RiotApiClient
 from riot.config import RiotConfig
 from riot.service import _to_match_summary, matchup_observation
@@ -161,6 +163,10 @@ class RiotData:
                 detail = self.match_detail(match_id)
             except NotFound:
                 continue
+            except (RiotApiError, requests.exceptions.RequestException):
+                if not summaries:
+                    raise
+                break       # 20개 중 하나가 일시 오류면 이미 받은 경기는 버리지 않고 돌려준다
             if not any(p.get("puuid") == puuid for p in detail["info"]["participants"]):
                 continue
             summaries.append(asdict(_to_match_summary(detail, puuid)))
