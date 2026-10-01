@@ -11,7 +11,7 @@
 서버가 대신하는 것:
 
 - **라이엇 데이터**(1단계): 계정·랭크·전적·경기 상세
-- **AI**(2단계): 룬 추천, 픽창 질문, 인게임 질문, AI에게 질문. 서버가 공식 자료를 검색하고 Gemini를 부릅니다.
+- **AI**(2단계): 룬 추천, 픽창 질문, 인게임 질문, AI에게 질문. 서버가 공식 자료를 검색하고 HASA 모델(기본 nemotron-super-120b)을 부릅니다.
 
 그래서 배포판 앱에는 API 키가 하나도 들어가지 않습니다. 서버의 공식 게임 자료는 매일 새벽 5시에 자동으로 갱신됩니다(`riftflow-knowledge.timer`).
 
@@ -81,7 +81,7 @@ sed 's/DOMAIN/riftflow-team.duckdns.org/' ~/riftflow/app/deploy/Caddyfile | sudo
 sudo systemctl reload caddy
 ```
 
-라이엇 키와 Gemini 키 입력 (`RIOT_API_KEY=`, `GEMINI_API_KEY=` 뒤에 각각 붙여 넣고 저장):
+라이엇 키 입력 (`RIOT_API_KEY=` 뒤에 붙여 넣고 저장). AI 키(HASA)는 개발 PC에서 `deploy/set_key.py HASA_API_KEY`로 넣고, 팀원 키는 `--add`로 덧붙입니다:
 
 ```bash
 nano ~/riftflow/server.env
@@ -143,7 +143,7 @@ RIFTFLOW_SERVER_URL=https://riftflow-team.duckdns.org
 
 - `RIFTFLOW_RIOT_LIMITS`: 라이엇 요청 한도. Personal 키 기본값 `18/1,90/120`, Production 키 승인 뒤 `480/10,29000/600`
 - `RIFTFLOW_DEVICE_DAILY_REQUESTS`: 기기당 하루 전적 요청 수 (기본 300)
-- `RIFTFLOW_DEVICE_DAILY_AI`: 기기당 하루 AI 요청 수 (기본 40). 서버의 Gemini 무료 한도(프로젝트당 하루 20회 수준)는 모든 사용자가 나눠 쓰므로, 여러 명이 쓰면 Gemini 결제 연결이 필요합니다
+- `RIFTFLOW_DEVICE_DAILY_AI`: 기기당 하루 AI 요청 수 (기본 40). HASA 개발키는 키마다 하루 성공 500회·분당 10회·동시 1건이며 모든 사용자가 나눠 씁니다. 키를 쉼표로 여러 개 넣으면 한도가 키마다 더해집니다
 
 ## 주의
 

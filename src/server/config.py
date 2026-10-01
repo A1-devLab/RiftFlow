@@ -27,10 +27,11 @@ class Settings:
     # AI (2단계). 키가 없으면 AI 경로는 '사용할 수 없음'으로 응답한다.
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.5-flash-lite"
-    # LLM_PROVIDER=hasa면 HASA(OpenAI 호환) 모델을 쓴다. 비우면 Gemini.
-    llm_provider: str = "gemini"
-    hasa_api_key: str = ""
-    hasa_model: str = "qwen3-next-80b"   # 쉼표로 여러 개. 모두 못 쓰면 Gemini로 넘어간다
+    # LLM_PROVIDER=hasa면 HASA(OpenAI 호환) 모델만 쓴다 (기본). gemini면 Gemini만.
+    llm_provider: str = "hasa"
+    hasa_api_key: str = ""                  # 쉼표로 여러 개 (내 키, 팀원 키). 한도가 키마다 더해진다
+    hasa_model: str = "nemotron-super-120b"  # 쉼표로 여러 개. 앞 모델을 못 쓰면 다음 모델
+    llm_fallback: str = ""                  # 'gemini'면 HASA가 실패할 때 Gemini로 넘긴다 (기본: 넘기지 않음)
     knowledge_db_path: str = "riftflow.db"   # 공식 게임 자료 DB (서버에서 하루 한 번 갱신)
     device_daily_ai: int = 40              # 기기당 하루 AI 요청 수 (룬 추천 재요청 포함)
     # 기기 토큰은 누구나 새로 받을 수 있어서 기기 한도만으로는 막을 수 없다. IP와 서버 전체 한도를 함께 둔다.
@@ -58,9 +59,10 @@ class Settings:
             device_creations_per_hour=int(env("RIFTFLOW_DEVICE_CREATIONS_PER_HOUR", "5")),
             gemini_api_key=env("GEMINI_API_KEY", ""),
             gemini_model=env("GEMINI_MODEL") or "gemini-3.5-flash-lite",
-            llm_provider=(env("LLM_PROVIDER") or "gemini").strip().lower(),
+            llm_provider=(env("LLM_PROVIDER") or "hasa").strip().lower(),
             hasa_api_key=env("HASA_API_KEY", ""),
-            hasa_model=env("HASA_MODEL") or "qwen3-next-80b",
+            hasa_model=env("HASA_MODEL") or "nemotron-super-120b",
+            llm_fallback=(env("LLM_FALLBACK") or "").strip().lower(),
             knowledge_db_path=env("RIFTFLOW_KNOWLEDGE_DB", "riftflow.db"),
             device_daily_ai=int(env("RIFTFLOW_DEVICE_DAILY_AI", "40")),
             ip_daily_ai=int(env("RIFTFLOW_IP_DAILY_AI", "150")),

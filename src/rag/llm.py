@@ -1,10 +1,11 @@
-"""AI 제공자 고르기. LLM_PROVIDER=hasa면 HASA(OpenAI 호환), 그 밖에는 Gemini.
+"""AI 제공자 고르기. 기본은 HASA(OpenAI 호환). LLM_PROVIDER=gemini면 Gemini.
 
 데스크톱·서버·터미널이 모두 여기의 generate를 부른다. 프롬프트와 결과 형식은 제공자와 상관없이 같다.
 
-HASA를 고르고 Gemini 키도 있으면, HASA가 실패할 때(키에 모델 권한 없음, 한도, 혼잡, 시간 초과) Gemini로 넘긴다.
-같은 르블랑 픽창으로 비교했을 때 Gemini는 2.7초에 정석 룬을 골랐고, 지금 키로 쓸 수 있는 HASA 모델(gpt-oss-120b)은
-10~90초가 걸리고 결과가 흔들렸다 (2026-10). 그래서 HASA는 Qwen3 Next 하나만 두고, 안 되면 Gemini가 답한다.
+HASA만 쓰는 것이 기본이다 (1.0.0부터). LLM_FALLBACK=gemini를 따로 주면 HASA가 실패할 때 Gemini로 넘긴다.
+대체 모델이 없으므로 HASA 키가 모두 바쁘면 차례를 길게 기다린다 (FALLBACK_SLOT_WAIT, 없을 때 NO_FALLBACK_SLOT_WAIT).
+모델 선택 기록: HASA 모델끼리 같은 픽창으로 비교해 nemotron-super-120b를 골랐다 (2026-10, 정석 룬을 첫 시도에 통과,
+룬 18초·아이템 10초). qwen3-next-80b는 키 권한이 열리면 앞에 넣어 비교한 뒤 쓴다.
 """
 import os
 
@@ -15,8 +16,8 @@ PROVIDERS = {'gemini': (gemini, 'GEMINI_API_KEY', 'GEMINI_MODEL'),
 
 
 def provider(name=None):
-    name = (name or os.environ.get('LLM_PROVIDER') or 'gemini').strip().lower()
-    return name if name in PROVIDERS else 'gemini'
+    name = (name or os.environ.get('LLM_PROVIDER') or 'hasa').strip().lower()
+    return name if name in PROVIDERS else 'hasa'
 
 
 def key_env(name=None):
@@ -47,11 +48,20 @@ def with_fallback(first, second):
     return call
 
 
+FALLBACK_SLOT_WAIT = 8
+NO_FALLBACK_SLOT_WAIT = 60
+
+
+def fallback_enabled():
+    return (os.environ.get('LLM_FALLBACK') or '').strip().lower() == 'gemini' and bool(os.environ.get('GEMINI_API_KEY'))
+
+
 def generate(prompt, model=None, provider_name=None, **options):
     name = provider(provider_name)
-    module = PROVIDERS[name][0]
-    first = lambda p, **o: module.generate(p, model=model or default_model(name), **o)
-    second = None
-    if name == 'hasa' and os.environ.get('GEMINI_API_KEY'):
-        second = lambda p, **o: gemini.generate(p, model=default_model('gemini'), **o)
+    if name != 'hasa':
+        return gemini.generate(prompt, model=model or default_model(name), **options)
+    fallback = fallback_enabled()
+    wait = FALLBACK_SLOT_WAIT if fallback else NO_FALLBACK_SLOT_WAIT
+    first = lambda p, **o: openai_compat.generate(p, model=model or default_model(name), slot_wait=wait, **o)
+    second = (lambda p, **o: gemini.generate(p, model=default_model('gemini'), **o)) if fallback else None
     return with_fallback(first, second)(prompt, **options)

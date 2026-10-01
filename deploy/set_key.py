@@ -26,6 +26,13 @@ import json, os, subprocess, sys, time, urllib.request
 values = json.loads(sys.stdin.read())
 path = os.path.expanduser("~/riftflow/server.env")
 lines = open(path, encoding="utf-8").read().splitlines()
+add = values.pop("__add__", None)
+if add:
+    current = next((line.split("=", 1)[1] for line in lines if line.startswith(add + "=")), "")
+    keys = [k.strip() for k in current.split(",") if k.strip()]
+    if values[add] not in keys:
+        keys.append(values[add])
+    values[add] = ",".join(keys)
 for name, value in values.items():
     for i, line in enumerate(lines):
         if line.startswith(name + "="):
@@ -39,13 +46,25 @@ with os.fdopen(fd, "w", encoding="utf-8") as f:
 os.replace(path + ".tmp", path)
 subprocess.run(["systemctl", "--user", "restart", "riftflow-api"], check=True)
 time.sleep(3)
-print("server.env 갱신:", ", ".join(values), "· 서비스", subprocess.run(["systemctl", "--user", "is-active", "riftflow-api"], capture_output=True, text=True).stdout.strip())
+count = len([k for k in values.get(add, "").split(",") if k]) if add else None
+print("server.env 갱신:", ", ".join(values), ("(키 %d개)" % count) if count else "", "· 서비스", subprocess.run(["systemctl", "--user", "is-active", "riftflow-api"], capture_output=True, text=True).stdout.strip())
 print("health:", urllib.request.urlopen("http://127.0.0.1:8787/v1/health", timeout=5).read().decode())
 '''
 
 
+def merged(current, new):
+    """쉼표로 이은 키 목록 뒤에 새 키를 덧붙인다 (이미 있으면 그대로)."""
+    keys = [k.strip() for k in current.split(',') if k.strip()]
+    return ','.join(keys if new in keys else keys + [new])
+
+
 def update_env(path, values):
+    values = dict(values)
+    add = values.pop('__add__', None)
     lines = path.read_text(encoding='utf-8').splitlines() if path.exists() else []
+    if add:
+        current = next((line.split('=', 1)[1] for line in lines if line.startswith(add + '=')), '')
+        values[add] = merged(current, values[add])
     for name, value in values.items():
         for i, line in enumerate(lines):
             if line.startswith(name + '='):
@@ -63,6 +82,8 @@ def main():
     target = parser.add_mutually_exclusive_group()
     target.add_argument('--local-only', action='store_true', help='로컬 .env에만 넣기')
     target.add_argument('--server-only', action='store_true', help='서버 server.env에만 넣기')
+    parser.add_argument('--add', action='store_true',
+                        help='기존 키를 지우지 않고 쉼표로 덧붙이기 (팀원 키 추가). 같은 키는 한 번만 들어간다')
     args = parser.parse_args()
     if not NAME.match(args.key_name):
         parser.error('키 이름은 대문자·숫자·_ 로 씁니다 (예: HASA_API_KEY)')
@@ -77,11 +98,13 @@ def main():
     if not key or any(c.isspace() for c in key):
         sys.exit('키가 비어 있거나 공백이 들어 있습니다. 다시 실행하세요.')
     values = dict(extra, **{args.key_name: key})
-    print('입력됨: %s…(%d자)' % (key[:6], len(key)))
+    print('입력됨: %s…(%d자)%s' % (key[:6], len(key), ' · 기존 키 뒤에 덧붙임' if args.add else ''))
+    if args.add:
+        values['__add__'] = args.key_name
 
     if not args.server_only:
         update_env(ROOT / '.env', values)
-        print('로컬 .env 갱신:', ', '.join(values))
+        print('로컬 .env 갱신:', ', '.join(k for k in values if k != '__add__'))
     if not args.local_only:
         host = os.environ.get('RIFTFLOW_HOST') or 'minipc'
         # 원격 코드는 base64로 감싸 셸 따옴표·줄바꿈 문제를 피한다. 키는 명령줄이 아니라 표준 입력으로 간다.

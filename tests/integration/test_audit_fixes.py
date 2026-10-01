@@ -37,7 +37,7 @@ class WindowStateTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self.temp.cleanup)
 
     def window(self):
@@ -94,6 +94,7 @@ class WindowStateTests(unittest.TestCase):
     def test_chat_shows_one_pending_bubble_and_errors_stay_on_their_screen(self):
         window = self.window()
         page = window.out_game
+        page.askRequested.disconnect()                   # 실제 AI 요청을 띄우지 않는다
         before = page.messages.count()
         page.set_busy(True)                              # 룬 추천 같은 다른 작업
         self.assertEqual(page.messages.count(), before)

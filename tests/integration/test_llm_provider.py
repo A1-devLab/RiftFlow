@@ -1,4 +1,4 @@
-"""AI provider switch: Gemini by default, HASA (OpenAI-compatible) with LLM_PROVIDER=hasa. No network or real key."""
+"""AI provider: HASA (OpenAI-compatible) by default with several keys; Gemini only on request. No network or real key."""
 import io
 import json
 import os
@@ -30,37 +30,22 @@ def http_error(code, body='', headers=None):
     return urllib.error.HTTPError('u', code, 'x', headers or {}, io.BytesIO(body.encode()))
 
 
+def auth(request):
+    return request.get_header('Authorization').split()[-1]
+
+
 class OpenAICompatTests(unittest.TestCase):
     def setUp(self):
-        openai_compat._blocked.clear()
-        openai_compat._sent.clear()
-        self.addCleanup(openai_compat._blocked.clear)
-        self.addCleanup(openai_compat._sent.clear)
+        openai_compat.reset_state()
+        self.addCleanup(openai_compat.reset_state)
 
-    def test_quota_and_timeouts_skip_hasa_for_a_while_and_rpm_is_respected(self):
-        calls = []
-
-        def busy(request, timeout):
-            calls.append(1)
-            raise http_error(429, 'daily limit')
-        with self.assertRaises(GeminiError):
-            openai_compat.generate(PROMPT, model='m', key='k', opener=busy, retries=0)
-        with self.assertRaises(GeminiError) as caught:
-            openai_compat.generate(PROMPT, model='m', key='k', opener=busy, retries=0)
-        self.assertEqual(len(calls), 1)                 # 두 번째는 보내지 않고 바로 실패 → 서버는 Gemini로 넘김
-        openai_compat._blocked.clear()
-        openai_compat._sent[:] = [time.time()] * openai_compat.RPM_LIMIT
-        with self.assertRaises(GeminiError) as caught:
-            openai_compat.generate(PROMPT, model='m', key='k', opener=lambda r, timeout: reply('ok'))
-        self.assertEqual(caught.exception.kind, 'busy')  # 분당 한도를 넘기지 않는다
-
-    def test_request_shape_auth_header_and_json_mode(self):
+    def test_request_shape_auth_header_and_json_schema(self):
         sent = []
 
         def opener(request, timeout):
             sent.append(request)
             return reply('<think>생각</think>{"a": 1}')
-        result = openai_compat.generate(PROMPT, model='qwen3-next-80b', key='sk-dev-test', opener=opener,
+        result = openai_compat.generate(PROMPT, model='nemotron-super-120b', key='sk-dev-test', opener=opener,
                                         config={'responseMimeType': 'application/json', 'responseSchema': {
                                             'type': 'OBJECT', 'properties': {'ids': {'type': 'ARRAY', 'items': {'type': 'INTEGER'}}},
                                             'required': ['ids'], 'propertyOrdering': ['ids']}},
@@ -70,41 +55,77 @@ class OpenAICompatTests(unittest.TestCase):
         self.assertEqual(request.full_url, 'https://example.test/v1/chat/completions')
         self.assertEqual(request.get_header('Authorization'), 'Bearer sk-dev-test')
         body = json.loads(request.data)
-        self.assertEqual(body['model'], 'qwen3-next-80b')
-        self.assertEqual([m['role'] for m in body['messages']], ['system', 'user'])
-        self.assertEqual(body['response_format']['type'], 'json_schema')   # Gemini 스키마를 JSON Schema로 옮김
+        self.assertEqual(body['model'], 'nemotron-super-120b')
         self.assertEqual(body['response_format']['json_schema']['schema'],
                          {'type': 'object', 'properties': {'ids': {'type': 'array', 'items': {'type': 'integer'}}},
                           'required': ['ids']})
         self.assertNotIn('sk-dev-test', json.dumps(body))                 # 키는 헤더에만
 
-    def test_drops_json_mode_when_model_rejects_it(self):
+    def test_format_is_lowered_step_by_step(self):
         bodies = []
 
-        def opener(request, timeout):
+        def rejects(request, timeout):
             bodies.append(json.loads(request.data))
             if len(bodies) == 1:
                 raise http_error(400, '{"error": "response_format is not supported"}')
             return reply('{"ok": true}')
-        result = openai_compat.generate(PROMPT, model='m', key='k', opener=opener,
-                                        config={'responseMimeType': 'application/json'})
-        self.assertEqual(result['text'], '{"ok": true}')
+        openai_compat.generate(PROMPT, model='m', key='k', opener=rejects, config={'responseMimeType': 'application/json'})
         self.assertNotIn('response_format', bodies[1])
+        bodies.clear()
 
-    def test_empty_reply_with_format_is_resent_without_format(self):
-        bodies = []
-
-        def opener(request, timeout):
+        def empty(request, timeout):
             bodies.append(json.loads(request.data))
             return reply('' if len(bodies) < 3 else '{"page": 1}')       # gpt-oss: 형식을 걸면 빈 답
-        result = openai_compat.generate(PROMPT, model='m', key='k', opener=opener,
+        result = openai_compat.generate(PROMPT, model='m', key='k', opener=empty,
                                         config={'responseMimeType': 'application/json', 'responseSchema': {'type': 'OBJECT'}})
         self.assertEqual(result['text'], '{"page": 1}')
         self.assertEqual([b.get('response_format', {}).get('type') for b in bodies], ['json_schema', 'json_object', None])
 
-    def test_model_without_permission_falls_back_and_is_skipped_for_a_while(self):
-        models = []
-        now = [1000.0]
+    def test_two_keys_share_the_load_and_a_limited_key_hands_over(self):
+        used = []
+
+        def opener(request, timeout):
+            used.append(auth(request))
+            if auth(request) == 'mine' and used.count('mine') == 2:
+                raise http_error(429, 'quota_txn_daily')
+            return reply('ok')
+        for _ in range(3):
+            openai_compat.generate(PROMPT, model='m', key='mine,team', opener=opener)
+        # 1번째: 내 키, 2번째: 내 키가 하루 한도 → 같은 요청을 팀원 키로 바로 다시, 3번째: 쉬는 내 키를 건너뛰고 팀원 키
+        self.assertEqual(used, ['mine', 'mine', 'team', 'team'])
+
+    def test_busy_key_is_skipped_for_a_free_one(self):
+        import threading
+        used, release = [], threading.Event()
+
+        def opener(request, timeout):
+            used.append(auth(request))
+            if auth(request) == 'mine':
+                release.wait(5)                  # 내 키로 보낸 요청이 오래 걸리는 중
+            return reply('ok')
+        worker = threading.Thread(target=lambda: openai_compat.generate(PROMPT, model='m', key='mine,team', opener=opener))
+        worker.start()
+        while not used:
+            time.sleep(0.01)
+        openai_compat.generate(PROMPT, model='m', key='mine,team', opener=opener)
+        release.set()
+        worker.join(5)
+        self.assertEqual(used, ['mine', 'team'])  # 동시 1건 한도라 비어 있는 팀원 키로 보낸다
+
+    def test_invalid_key_is_rested_to_avoid_hasa_strikes(self):
+        calls = []
+
+        def opener(request, timeout):
+            calls.append(auth(request))
+            raise http_error(403, '{"error": "security_policy_blocked", "violation_code": "invalid_api_key"}')
+        for _ in range(3):
+            with self.assertRaises(GeminiError) as caught:
+                openai_compat.generate(PROMPT, model='m', key='old', opener=opener)
+        self.assertEqual(calls, ['old'])        # 경고가 쌓이지 않게 30분 동안 다시 보내지 않는다
+        self.assertEqual(caught.exception.kind, 'invalid_key')
+
+    def test_model_permission_is_per_key_and_rechecked_later(self):
+        models, now = [], [1000.0]
 
         def opener(request, timeout):
             model = json.loads(request.data)['model']
@@ -112,51 +133,50 @@ class OpenAICompatTests(unittest.TestCase):
             if model == 'qwen3-next-80b':
                 raise http_error(403, '{"detail": {"error": "model_not_on_key"}}')
             return reply('ok')
-        openai_compat._blocked.clear()
-        call = lambda: openai_compat.generate(PROMPT, model='qwen3-next-80b,gpt-oss-120b', key='k', opener=opener,
-                                              clock=lambda: now[0])
-        self.assertEqual(call()['model'], 'gpt-oss-120b')
+        call = lambda: openai_compat.generate(PROMPT, model='qwen3-next-80b,nemotron-super-120b', key='k',
+                                              opener=opener, clock=lambda: now[0])
+        self.assertEqual(call()['model'], 'nemotron-super-120b')
         call()
-        self.assertEqual(models, ['qwen3-next-80b', 'gpt-oss-120b', 'gpt-oss-120b'])   # 10분 동안 건너뜀
-        now[0] += openai_compat.BLOCK_SECONDS + 1
+        self.assertEqual(models, ['qwen3-next-80b', 'nemotron-super-120b', 'nemotron-super-120b'])
+        now[0] += openai_compat.MODEL_BLOCK + 1
         call()
-        self.assertEqual(models[-2:], ['qwen3-next-80b', 'gpt-oss-120b'])               # 권한이 생겼는지 다시 확인
-        openai_compat._blocked.clear()
-        only = []
-        no_permission = lambda request, timeout: (only.append(1), (_ for _ in ()).throw(
-            http_error(403, '{"detail": {"error": "model_not_on_key"}}')))[1]
-        for _ in range(2):
-            with self.assertRaises(GeminiError) as caught:
-                openai_compat.generate(PROMPT, model='qwen3-next-80b', key='k', opener=no_permission, clock=lambda: now[0])
-            self.assertEqual(caught.exception.kind, 'model_not_allowed')
-        self.assertEqual(len(only), 1)                  # 막힌 모델은 다시 부르지 않고 바로 다음(Gemini)으로
-        openai_compat._blocked.clear()
+        self.assertEqual(models[-2:], ['qwen3-next-80b', 'nemotron-super-120b'])   # 권한이 생겼는지 다시 확인
 
-    def test_short_429_waits_once_then_reports_quota(self):
-        waits = []
-        calls = []
-
+    def test_quota_rest_is_reported_as_busy_not_as_missing_model(self):
         def opener(request, timeout):
+            raise http_error(429, 'daily limit')
+        with self.assertRaises(GeminiError):
+            openai_compat.generate(PROMPT, model='m', key='k', opener=opener)
+        with self.assertRaises(GeminiError) as caught:
+            openai_compat.generate(PROMPT, model='m', key='k', opener=opener)
+        self.assertEqual(caught.exception.kind, 'quota')
+        self.assertNotIn('쓸 수 없습니다', caught.exception.message)    # 예전: '쓸 수 있는 모델이 없습니다'
+
+    def test_rpm_and_server_errors(self):
+        now = time.time()
+        openai_compat._sent[openai_compat.key_id('k')] = [now] * openai_compat.RPM_LIMIT
+        with self.assertRaises(GeminiError) as caught:
+            openai_compat.generate(PROMPT, model='m', key='k', opener=lambda r, timeout: reply('ok'), slot_wait=0.05)
+        self.assertEqual(caught.exception.kind, 'busy')                   # 분당 한도를 넘기지 않는다
+        openai_compat.reset_state()
+        waits, calls = [], []
+
+        def flaky(request, timeout):
             calls.append(1)
-            raise http_error(429, 'busy', {'Retry-After': '4'})
-        with self.assertRaises(GeminiError) as caught:
-            openai_compat.generate(PROMPT, key='k', opener=opener, sleep=waits.append, retries=1)
-        self.assertEqual((len(calls), waits), (2, [4]))
-        self.assertEqual(caught.exception.status, 429)
-        openai_compat._blocked.clear()                  # 429로 10분 건너뛰기가 걸린 것을 풀고 다음 경우를 본다
-        with self.assertRaises(GeminiError) as caught:
-            openai_compat.generate(PROMPT, key='k', opener=lambda r, timeout: (_ for _ in ()).throw(http_error(401)))
-        self.assertIn('HASA_API_KEY', caught.exception.message)
+            if len(calls) == 1:
+                raise http_error(502, 'bad gateway', {'Retry-After': '2'})
+            return reply('ok')
+        self.assertEqual(openai_compat.generate(PROMPT, model='m', key='k', opener=flaky, sleep=waits.append)['text'], 'ok')
+        self.assertEqual(waits, [2])
 
     def test_read_timeout_becomes_a_handled_error(self):
-        """읽기 시간 초과는 URLError가 아니라 TimeoutError라서 예전에는 룬 추천 작업을 그대로 깨뜨렸다."""
         from rag import gemini
 
         def slow(request, timeout):
             raise TimeoutError('The read operation timed out')
         with self.assertRaises(GeminiError) as caught:
             openai_compat.generate(PROMPT, model='m', key='k', opener=slow)
-        self.assertIn('TimeoutError', caught.exception.message)
+        self.assertEqual(caught.exception.kind, 'timeout')
         with self.assertRaises(GeminiError):
             gemini.generate(PROMPT, key='k', opener=slow, retries=0)
 
@@ -168,44 +188,40 @@ class OpenAICompatTests(unittest.TestCase):
 
 
 class ProviderSwitchTests(unittest.TestCase):
-    def test_env_picks_provider_key_and_model(self):
-        with patch.dict(os.environ, {'LLM_PROVIDER': '', 'GEMINI_API_KEY': 'g', 'HASA_API_KEY': ''}):
-            self.assertEqual((llm.provider(), llm.key_env(), llm.has_key()), ('gemini', 'GEMINI_API_KEY', True))
-        with patch.dict(os.environ, {'LLM_PROVIDER': 'HASA', 'HASA_API_KEY': '', 'HASA_MODEL': ''}):
-            self.assertEqual((llm.provider(), llm.key_env(), llm.has_key()), ('hasa', 'HASA_API_KEY', False))
-            self.assertEqual(llm.default_model(), 'qwen3-next-80b')                  # Qwen3 Next가 1순위
-            with patch('rag.openai_compat.generate', return_value={'text': 'ok'}) as call:
-                llm.generate(PROMPT, retries=0)
-            self.assertEqual(call.call_args.kwargs['model'], 'qwen3-next-80b')
+    def test_hasa_is_the_default_and_gemini_needs_explicit_fallback(self):
+        with patch.dict(os.environ, {'LLM_PROVIDER': '', 'HASA_API_KEY': 'h', 'HASA_MODEL': '', 'LLM_FALLBACK': '',
+                                     'GEMINI_API_KEY': 'g'}):
+            self.assertEqual((llm.provider(), llm.key_env(), llm.default_model()),
+                             ('hasa', 'HASA_API_KEY', 'nemotron-super-120b'))
+            with patch('rag.openai_compat.generate', side_effect=GeminiError('혼잡', status=503)), \
+                 patch('rag.gemini.generate') as gem:
+                with self.assertRaises(GeminiError):
+                    llm.generate(PROMPT)
+            gem.assert_not_called()                                       # Gemini 키가 있어도 넘기지 않는다
+        with patch.dict(os.environ, {'LLM_PROVIDER': 'hasa', 'HASA_API_KEY': 'h', 'LLM_FALLBACK': 'gemini',
+                                     'GEMINI_API_KEY': 'g'}), \
+             patch('rag.openai_compat.generate', side_effect=GeminiError('혼잡', status=503)), \
+             patch('rag.gemini.generate', return_value={'text': 'gemini'}):
+            self.assertTrue(llm.generate(PROMPT)['fallback'])
 
-    def test_server_uses_hasa_when_configured(self):
+    def test_server_uses_hasa_only_with_all_keys(self):
         from server.config import Settings
-        with patch.dict(os.environ, {'RIOT_API_KEY': 'r', 'LLM_PROVIDER': 'hasa', 'HASA_API_KEY': 'h', 'GEMINI_API_KEY': ''}):
+        with patch.dict(os.environ, {'RIOT_API_KEY': 'r', 'LLM_PROVIDER': '', 'HASA_API_KEY': 'mine,team',
+                                     'HASA_MODEL': '', 'LLM_FALLBACK': '', 'GEMINI_API_KEY': 'g'}):
             settings = Settings.from_env()
-        self.assertEqual((settings.llm_provider, settings.ai_key, settings.hasa_model),
-                         ('hasa', 'h', 'qwen3-next-80b'))
+        self.assertEqual((settings.llm_provider, settings.hasa_model, settings.llm_fallback),
+                         ('hasa', 'nemotron-super-120b', ''))
         try:
             from server.app import gemini_generator
         except ImportError:
             self.skipTest('fastapi not installed')
-        with patch('rag.openai_compat.generate', return_value={'text': 'ok'}) as call:
-            gemini_generator(settings)(PROMPT, config={'temperature': 0})
-        self.assertEqual(call.call_args.kwargs['key'], 'h')
-        both = settings.__class__(**dict(settings.__dict__, gemini_api_key='g'))
-        with patch('rag.openai_compat.generate', side_effect=GeminiError('권한 없음', kind='model_not_allowed')), \
-             patch('rag.gemini.generate', return_value={'text': 'gemini'}) as gem:
-            result = gemini_generator(both)(PROMPT)
-        self.assertEqual((result['text'], result['fallback'], gem.call_args.kwargs['key']), ('gemini', True, 'g'))
-
-    def test_desktop_falls_back_to_gemini_only_when_gemini_key_exists(self):
-        with patch.dict(os.environ, {'LLM_PROVIDER': 'hasa', 'HASA_API_KEY': 'h', 'GEMINI_API_KEY': 'g', 'HASA_MODEL': ''}), \
-             patch('rag.openai_compat.generate', side_effect=GeminiError('혼잡', status=503)), \
-             patch('rag.gemini.generate', return_value={'text': 'gemini'}):
-            self.assertTrue(llm.generate(PROMPT)['fallback'])
-        with patch.dict(os.environ, {'LLM_PROVIDER': 'hasa', 'HASA_API_KEY': 'h', 'GEMINI_API_KEY': ''}), \
-             patch('rag.openai_compat.generate', side_effect=GeminiError('혼잡', status=503)):
+        with patch('rag.openai_compat.generate', side_effect=GeminiError('혼잡', status=503)) as hasa, \
+             patch('rag.gemini.generate') as gem:
             with self.assertRaises(GeminiError):
-                llm.generate(PROMPT)
+                gemini_generator(settings)(PROMPT)
+        self.assertEqual(hasa.call_args.kwargs['key'], 'mine,team')
+        self.assertEqual(hasa.call_args.kwargs['slot_wait'], llm.NO_FALLBACK_SLOT_WAIT)   # 대체가 없으니 차례를 기다린다
+        gem.assert_not_called()
 
 
 class NameResolutionTests(unittest.TestCase):
@@ -229,6 +245,13 @@ class NameResolutionTests(unittest.TestCase):
         self.assertEqual(rune_reasons(['감전은 3번 적중 시 추가 피해', {'rune': '비열한 한 방', 'reason': '고정 피해'},
                                        '관계없는 문장'], names),
                          [{'rune': '감전', 'reason': '감전은 3번 적중 시 추가 피해'}, {'rune': '비열한 한 방', 'reason': '고정 피해'}])
+
+    def test_reasons_fall_back_to_requested_order(self):
+        from game_phases.before_game.runes import rune_reasons
+        names = {8112: '감전', 8126: '비열한 한 방'}
+        self.assertEqual(rune_reasons([{'rune_id': '8112', 'reason': 'a'}], names), [{'rune': '감전', 'reason': 'a'}])
+        english = [{'rune': 'Electrocute', 'reason': '연계 피해'}, {'rune': 'Cheap Shot', 'reason': '고정 피해'}]
+        self.assertEqual([r['rune'] for r in rune_reasons(english, names)], ['감전', '비열한 한 방'])
 
     def test_item_names_and_digit_strings_are_accepted_from_candidates_only(self):
         from game_phases.in_game.items import validate
