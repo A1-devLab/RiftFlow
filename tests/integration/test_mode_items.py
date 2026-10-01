@@ -66,12 +66,13 @@ class ModeItemTests(unittest.TestCase):
                                     'scoreboard': board, 'team_gold': TeamGoldTotals(1, 1),
                                     'active_player_name': 'Me', 'game': {'game_mode': 'ARAM', 'map_number': 12}}, {})
         self.assertEqual(view['mode_name'], '칼바람 나락')
-        reply = {'options': [{'item_id': 773089, 'reason': '주문력'}, {'item_id': 3157, 'reason': '생존'}], 'summary': '고르세요'}
+        reply = {'options': [{'item_id': 773089, 'reason': '주문력'}, {'item_id': 3157, 'reason': '생존'},
+                             {'item_id': 3065, 'reason': '마저'}], 'summary': '고르세요'}
         generate = Mock(return_value={'text': json.dumps(reply, ensure_ascii=False)})
         result = recommend_items(self.db, view, '뭐 사야 해?', generate=generate, prompt_player=prompt_player)
         self.assertTrue(result['generated'])
-        self.assertIn('라바돈의 죽음모자 (3,300골드', result['answer'])
-        self.assertIn('칼바람 나락 상점', result['answer'])
+        self.assertIn('라바돈의 죽음모자(3,300)', result['answer'])
+        self.assertEqual(result['mode_name'], '칼바람 나락')
         payload = json.loads(generate.call_args.args[0]['user'])
         self.assertEqual(payload['game_mode'], '칼바람 나락')
 

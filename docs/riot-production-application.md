@@ -14,7 +14,7 @@
 |---|---|---|---|---|
 | 1 | API 키 보관 | 각 PC의 `.env`에서 Riot·Gemini 키를 읽어 직접 호출 | 키를 보관하는 백엔드 서버를 만들고 앱은 서버만 호출 | 일반 정책: "Do not include your API key in your code, especially if you plan on distributing a binary" |
 | 2 | 룬 자동 적용 | 픽창에서 추천이 나오면 클릭 없이 적용 | 설정에서 켜고 끄는 옵션으로 만들고, 기본값을 정한 뒤 신청서에 그대로 적기 | Personal 신청서에 "only after an explicit user click"이라고 적었음 |
-| 3 | 인게임 아이템 추천 | "지금 살 아이템" 하나를 추천 | 선택지 2~3개와 장단점을 보여 주는 방식으로 변경 | 롤 정책: "Apps that dictate player decisions" 비승인, 여러 선택지를 주는 것은 허용 |
+| 3 | 인게임 아이템 추천 | "지금 살 아이템" 하나를 추천 | 선택지 3개와 짧은 이유를 보여 주는 방식으로 변경 | 롤 정책: "Apps that dictate player decisions" 비승인, 여러 선택지를 주는 것은 허용 |
 | 4 | 429 처리 | 한도에 걸리면 오류만 표시 | `Retry-After`만큼 기다렸다 재시도, 받은 경기 상세는 저장해 다시 받지 않기 | Personal 신청서에 "handle HTTP 429 responses"라고 적었음. 롤 문서: "respect the rate limit" |
 | 5 | Gemini로 보내는 데이터 | 최근 전적 요약·랭크·개인 룬 기록을 보냄 (계정 식별자는 보내지 않음) | 개인정보처리방침에 공개하고, 신청서에 정확히 적기 | Personal 신청서에 "does not automatically send ... match histories to Gemini"라고 적었음 |
 | 6 | 개인정보처리방침·웹페이지 | 없음 | 공개 URL 준비 (다운로드, 개인정보처리방침, 문의처) | 공개 서비스 운영에 필요 |
