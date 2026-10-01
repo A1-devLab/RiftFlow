@@ -52,6 +52,17 @@ print("health:", urllib.request.urlopen("http://127.0.0.1:8787/v1/health", timeo
 '''
 
 
+def check_key(name, key):
+    """키처럼 보이지 않으면 이유를 돌려준다. Ctrl+V가 글자(0x16) 하나로 들어간 적이 있어서 넣기 전에 막는다."""
+    if not key:
+        return '키가 비어 있습니다.'
+    if any(c.isspace() for c in key) or not key.isascii() or not key.isprintable():
+        return '키에 공백이나 보이지 않는 글자가 들어 있습니다 (붙여넣기가 제대로 되지 않았을 수 있습니다).'
+    if name == 'HASA_API_KEY' and (not key.startswith('sk-') or len(key) < 20):
+        return 'HASA 키는 sk-로 시작하는 긴 문자열입니다 (입력된 길이 %d자).' % len(key)
+    return None
+
+
 def merged(current, new):
     """쉼표로 이은 키 목록 뒤에 새 키를 덧붙인다 (이미 있으면 그대로)."""
     keys = [k.strip() for k in current.split(',') if k.strip()]
@@ -94,9 +105,11 @@ def main():
             parser.error('--set 형식이 잘못되었습니다: %s' % item)
         extra[name] = value
 
+    print('붙여넣기: 마우스 오른쪽 클릭 (명령 프롬프트에서는 Ctrl+V가 글자로 들어갈 수 있습니다).')
     key = getpass.getpass('%s 붙여넣기 (화면에 보이지 않습니다) 후 Enter: ' % args.key_name).strip()
-    if not key or any(c.isspace() for c in key):
-        sys.exit('키가 비어 있거나 공백이 들어 있습니다. 다시 실행하세요.')
+    problem = check_key(args.key_name, key)
+    if problem:
+        sys.exit(problem + ' 아무것도 바꾸지 않았습니다. 다시 실행하세요.')
     values = dict(extra, **{args.key_name: key})
     print('입력됨: %s…(%d자)%s' % (key[:6], len(key), ' · 기존 키 뒤에 덧붙임' if args.add else ''))
     if args.add:
