@@ -3,14 +3,21 @@
 gemini.py와 같은 형태로 부르고 같은 결과를 돌려준다: generate(prompt, ...) → {'text', 'model', ...}.
 실패하면 GeminiError를 던진다. 호출하는 쪽(룬·아이템·질문)이 이미 GeminiError만 처리하므로 오류 종류를 늘리지 않는다.
 
-키는 환경변수 HASA_API_KEY에서 읽는다. 코드·저장소·로그에 키를 남기지 않는다.
+키는 환경변수 HASA_API_KEY에서 읽는다. 쉼표로 여러 개를 줄 수 있다 (내 키, 팀원 키).
+HASA 한도는 키마다 따로라서(개발키: 분당 10회, 동시 1건, 하루 성공 500회) 키가 둘이면 한도도 두 배가 된다.
+코드·저장소·로그에 키를 남기지 않는다. 키는 내부에서 해시 앞 8자리로만 구분한다.
 
-모델은 쉼표로 여러 개를 줄 수 있다 (HASA_MODEL=qwen3-next-80b,gpt-oss-120b). 앞 모델을 키가 쓸 수 없으면
-(403 model_not_on_key, 404) 다음 모델로 넘어가고, 그 모델은 10분 동안 건너뛴다. 권한이 생기면 자동으로 앞 모델로 돌아온다.
+키마다 상태를 따로 둔다.
+- 동시 1건: 키마다 자리 하나. 비어 있는 키를 먼저 쓰고, 모두 바쁘면 slot_wait초까지 기다린다.
+- 분당 한도: 키마다 최근 1분 동안 보낸 시각. 넘길 것 같으면 그 키는 건너뛴다.
+- 하루 한도(429)·키 무효(403 invalid_api_key): 그 키만 잠시 쉬게 하고 다른 키로 바로 다시 보낸다.
+  키 무효를 계속 보내면 HASA가 경고를 쌓다가 차단하므로(10회 초과부터 1→32분) 30분 동안 쓰지 않는다.
+- 모델 권한 없음(403 model_not_on_key): 그 키에서 그 모델만 10분 동안 건너뛴다. 권한이 생기면 자동으로 다시 쓴다.
+- 서버 일시 오류(5xx)는 자리를 놓은 뒤 잠깐 쉬고 다시 보낸다 (자리를 쥔 채 잠들지 않는다).
 
-HASA 개발키 한도 (2026-10 이용안내 기준): 분당 10회, 동시 1건, 하루 성공 호출 500회, 하루 토큰 2천만.
-동시 1건이라 같은 프로세스 안에서는 세마포어로 한 번에 하나씩만 보낸다 (서버에 5명이 동시에 물어도 429가 나지 않게).
+모델도 쉼표로 여러 개를 줄 수 있다 (HASA_MODEL=qwen3-next-80b,nemotron-super-120b). 앞 모델을 어느 키로도 쓸 수 없으면 다음 모델.
 """
+import hashlib
 import http.client
 import json
 import os
@@ -23,25 +30,50 @@ import urllib.request
 from .gemini import GeminiError, parse_seconds
 
 DEFAULT_BASE_URL = 'https://open.hasa.re.kr/v1'
-DEFAULT_MODEL = 'qwen3-next-80b'
-BLOCK_SECONDS = 600
-_blocked = {}              # 모델 → 다시 시도할 시각 (권한 없음·한도·시간 초과가 났던 모델)
-SLOT_WAIT = 8              # 다른 요청이 HASA를 쓰는 중이면 이만큼만 기다리고 Gemini로 넘긴다
-RPM_LIMIT = 10             # HASA 개발키 분당 한도. 넘길 것 같으면 보내지 않고 Gemini로 넘긴다
-_sent = []                 # 최근 1분 동안 보낸 시각
-_sent_lock = threading.Lock()
-TIMEOUT = 90              # 넘기면 Gemini로 넘어간다. 앱은 AI 요청을 180초까지 기다린다 (api_client.coach.AI_TIMEOUT)
-MAX_WAIT = 20              # 429에 Retry-After가 이보다 짧으면 기다렸다 한 번 더 보낸다 (동시·분당 한도)
+DEFAULT_MODEL = 'nemotron-super-120b'
+MODEL_BLOCK = 600          # 권한 없음·시간 초과가 난 모델을 건너뛰는 시간
+QUOTA_BLOCK = 600          # 한도에 걸린 키를 쉬게 하는 시간
+INVALID_BLOCK = 1800       # 무효로 거절된 키를 쓰지 않는 시간 (HASA 경고 누적 방지)
+SLOT_WAIT = 8              # 모든 키가 바쁠 때 기다리는 시간. 대체 모델이 없으면 호출하는 쪽이 길게 준다
+RPM_LIMIT = 10             # 개발키 분당 한도
+TIMEOUT = 90               # 한 번 응답을 기다리는 시간. 앱은 AI 요청을 180초까지 기다린다 (api_client.coach.AI_TIMEOUT)
+MAX_WAIT = 20              # 5xx에 Retry-After가 이보다 짧으면 기다렸다 한 번 더 보낸다
 DEFAULT_CONFIG = {'temperature': 0.2, 'maxOutputTokens': 4096}
-_slots = threading.BoundedSemaphore(max(1, int(os.environ.get('HASA_CONCURRENCY') or 1)))
 THINK = re.compile(r'<think>.*?</think>', re.S)
+RETRYABLE = (500, 502, 503, 504)
+
+_lock = threading.Lock()
+_free = threading.Condition(_lock)
+_busy = set()              # 지금 요청 중인 키 ID (키마다 동시 1건)
+_sent = {}                 # 키 ID → 최근 1분 동안 보낸 시각
+_key_blocked = {}          # 키 ID → (다시 쓸 시각, 사유)
+_model_blocked = {}        # (키 ID, 모델) → 다시 쓸 시각. 키 ID '*'는 모든 키 (공용 GPU 시간 초과)
+
+
+def api_keys(explicit=None):
+    raw = explicit or os.environ.get('HASA_API_KEY') or ''
+    keys = [key.strip() for key in str(raw).split(',') if key.strip()]
+    if not keys:
+        raise GeminiError('HASA_API_KEY가 없습니다. .env(또는 서버의 server.env)에 설정하세요.')
+    return keys
 
 
 def api_key(explicit=None):
-    key = explicit or os.environ.get('HASA_API_KEY')
-    if not key:
-        raise GeminiError('HASA_API_KEY가 없습니다. .env(또는 서버의 server.env)에 설정하세요.')
-    return key
+    """첫 번째 키."""
+    return api_keys(explicit)[0]
+
+
+def key_id(key):
+    return hashlib.sha256(key.encode('utf-8')).hexdigest()[:8]
+
+
+def reset_state():
+    """키·모델 상태를 비운다 (테스트, 키를 바꾼 뒤)."""
+    with _lock:
+        _busy.clear()
+        _sent.clear()
+        _key_blocked.clear()
+        _model_blocked.clear()
 
 
 def json_schema(schema):
@@ -101,12 +133,13 @@ def read_text(payload):
 def classify(code, detail, model):
     if code == 404 or (code == 403 and 'model_not_on_key' in detail):
         return GeminiError('이 키로 %s 모델을 쓸 수 없습니다.' % model, status=code, kind='model_not_allowed')
-    if code in (401, 403):
-        return GeminiError('API 키가 거부되었거나 이 키로 %s 모델을 쓸 수 없습니다. HASA_API_KEY를 확인하세요.' % model,
-                           status=code)
+    if code == 401 or (code == 403 and ('invalid_api_key' in detail or 'security_policy' in detail)):
+        return GeminiError('AI 키가 거부되었습니다. HASA_API_KEY를 확인하세요.', status=code, kind='invalid_key')
+    if code == 403:
+        return GeminiError('AI 키로 이 요청을 할 수 없습니다 (403).', status=code)
     if code == 429:
-        return GeminiError('AI 호출 한도를 넘었습니다. 잠시 뒤 다시 시도하세요. 계속되면 오늘 한도(하루 500회)를 다 쓴 것입니다.',
-                           status=429, kind='quota', detail={'status': 429, 'model': model, 'body': detail[:300]})
+        return GeminiError('AI 호출 한도를 넘었습니다. 잠시 뒤 다시 시도하세요.', status=429, kind='quota',
+                           detail={'status': 429, 'model': model, 'body': detail[:300]})
     if code == 503:
         return GeminiError('AI 서버가 준비 중이거나 혼잡합니다. 잠시 뒤 다시 시도하세요.', status=503)
     if code >= 500:
@@ -120,66 +153,133 @@ def _post(url, body, headers, send):
         return json.loads(response.read().decode('utf-8'))
 
 
-def generate(prompt, model=DEFAULT_MODEL, key=None, config=None, opener=None, retries=1, sleep=time.sleep,
-             base_url=None, clock=time.time):
-    models = [m.strip() for m in str(model or DEFAULT_MODEL).split(',') if m.strip()]
-    error = None
-    for name in models:
-        if _blocked.get(name, 0) > clock():
-            continue                    # 권한 없던 모델: 10분 동안 호출하지 않는다 (매번 403을 받으며 늦어지지 않게)
-        try:
-            return _generate(prompt, name, key, config, opener, retries, sleep, base_url, clock)
-        except GeminiError as failure:
-            if failure.kind in ('quota', 'timeout'):
-                # 하루 한도를 다 썼거나 공용 GPU가 막혀 있으면 10분 동안 바로 Gemini로 넘긴다
-                # (예전에는 매 요청이 한도 응답·시간 초과를 다 기다린 뒤에야 넘어갔다).
-                _blocked[name] = clock() + BLOCK_SECONDS
-                raise
-            if failure.kind != 'model_not_allowed':
-                raise
-            _blocked[name] = clock() + BLOCK_SECONDS
-            error = failure
-    raise error or GeminiError('이 키로 쓸 수 있는 모델이 없습니다: %s' % ', '.join(models), kind='model_not_allowed')
-
-
-def _reserve_minute(clock):
-    """분당 한도 안에서 한 번 보낼 자리를 잡는다. 없으면 False."""
-    with _sent_lock:
-        now = clock()
-        _sent[:] = [at for at in _sent if at > now - 60]
-        if len(_sent) >= RPM_LIMIT:
-            return False
-        _sent.append(now)
-        return True
-
-
 def _downgrade(body):
     """보낸 형식에서 한 단계 낮춘다: json_schema → json_object → 형식 없음."""
     return 'object' if body.get('response_format', {}).get('type') == 'json_schema' else False
 
 
-def _send_once(url, body, headers, send, clock):
-    """동시 1건 자리를 잠깐만 기다려 한 번 보낸다. 잠든 채로(재시도 대기) 자리를 쥐고 있지 않게 보낼 때만 잡는다."""
-    if not _slots.acquire(timeout=SLOT_WAIT):
-        raise GeminiError('AI 요청이 몰려 있습니다.', status=503, kind='busy')
-    try:
-        if not _reserve_minute(clock):
-            raise GeminiError('분당 AI 요청 한도에 가깝습니다.', status=429, kind='busy')
-        return _post(url, body, headers, send)
-    finally:
-        _slots.release()
+def _usable(keys, model, now):
+    result = []
+    for key in keys:
+        kid = key_id(key)
+        blocked = _key_blocked.get(kid)
+        if blocked and blocked[0] > now:
+            continue
+        if _model_blocked.get((kid, model), 0) > now or _model_blocked.get(('*', model), 0) > now:
+            continue
+        result.append(key)
+    return result
 
 
-def _generate(prompt, model, key, config, opener, retries, sleep, base_url, clock=time.time):
+def _acquire(keys, model, clock, slot_wait):
+    """쓸 수 있는 키 중 비어 있고 분당 한도가 남은 키 하나를 잡는다. 쓸 키가 없으면 None, 모두 바쁘면 기다린다."""
+    deadline = time.monotonic() + slot_wait
+    with _free:
+        while True:
+            now = clock()
+            usable = _usable(keys, model, now)
+            if not usable:
+                return None
+            for key in usable:
+                kid = key_id(key)
+                sent = _sent.setdefault(kid, [])
+                sent[:] = [at for at in sent if at > now - 60]
+                if kid not in _busy and len(sent) < RPM_LIMIT:
+                    _busy.add(kid)
+                    sent.append(now)
+                    return key
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise GeminiError('AI 요청이 몰려 있습니다. 잠시 뒤 다시 시도해 주세요.', status=503, kind='busy')
+            _free.wait(min(left, 1.0))
+
+
+def _release(key):
+    with _free:
+        _busy.discard(key_id(key))
+        _free.notify_all()
+
+
+def _block_reason(keys, model, now):
+    """왜 보낼 키가 없는지. 한도로 쉬는 중인데 '모델이 없다'고 잘못 안내하지 않게 사유를 구분한다."""
+    reasons = set()
+    for key in keys:
+        kid = key_id(key)
+        blocked = _key_blocked.get(kid)
+        if blocked and blocked[0] > now:
+            reasons.add(blocked[1])
+        elif _model_blocked.get(('*', model), 0) > now:
+            reasons.add('timeout')
+        elif _model_blocked.get((kid, model), 0) > now:
+            reasons.add('model_not_allowed')
+    if reasons & {'quota', 'timeout'}:
+        return GeminiError('AI 사용량이 많아 잠시 쉬는 중입니다. 잠시 뒤 다시 시도해 주세요.', status=429, kind='quota')
+    if reasons == {'invalid_key'}:
+        return GeminiError('AI 키가 거부되어 잠시 쓰지 않고 있습니다. HASA_API_KEY를 확인하세요.', status=403,
+                           kind='invalid_key')
+    return GeminiError('이 키로 %s 모델을 쓸 수 없습니다.' % model, status=403, kind='model_not_allowed')
+
+
+def generate(prompt, model=DEFAULT_MODEL, key=None, config=None, opener=None, retries=1, sleep=time.sleep,
+             base_url=None, clock=time.time, slot_wait=SLOT_WAIT):
+    keys = api_keys(key)
+    models = [m.strip() for m in str(model or DEFAULT_MODEL).split(',') if m.strip()]
+    error = None
+    for name in models:
+        try:
+            return _generate_with_keys(prompt, name, keys, config, opener, retries, sleep, base_url, clock, slot_wait)
+        except GeminiError as failure:
+            if failure.kind != 'model_not_allowed':
+                raise
+            error = failure                     # 어느 키로도 이 모델을 못 쓰면 다음 모델
+    raise error
+
+
+def _generate_with_keys(prompt, model, keys, config, opener, retries, sleep, base_url, clock, slot_wait):
+    attempt = 0
+    while True:
+        key = _acquire(keys, model, clock, slot_wait)
+        if key is None:
+            raise _block_reason(keys, model, clock())
+        kid, wait = key_id(key), None
+        try:
+            return _call(prompt, model, key, config, opener, base_url)
+        except GeminiError as failure:
+            now = clock()
+            with _lock:
+                if failure.kind == 'quota':
+                    _key_blocked[kid] = (now + QUOTA_BLOCK, 'quota')
+                elif failure.kind == 'invalid_key':
+                    _key_blocked[kid] = (now + INVALID_BLOCK, 'invalid_key')
+                elif failure.kind == 'model_not_allowed':
+                    _model_blocked[(kid, model)] = now + MODEL_BLOCK
+                elif failure.kind == 'timeout':
+                    _model_blocked[('*', model)] = now + MODEL_BLOCK
+            if failure.kind == 'timeout':
+                raise                           # 공용 GPU가 막힌 것이라 다른 키로 보내도 같다
+            if failure.kind is None:
+                retryable = failure.status in RETRYABLE or failure.status is None
+                if not retryable or attempt >= retries or (failure.retry_after or 3) > MAX_WAIT:
+                    raise
+                attempt += 1
+                wait = failure.retry_after or 3
+            # 한도·무효·권한처럼 이 키만의 문제면 다른 키로 바로 다시 보낸다
+        finally:
+            _release(key)
+        if wait:
+            sleep(wait)                         # 자리를 놓은 뒤에 쉰다
+
+
+def _call(prompt, model, key, config, opener, base_url):
+    """키 하나로 한 번 요청한다 (형식 낮추기 포함). 자리는 호출한 쪽이 쥐고 있다."""
     url = (base_url or os.environ.get('HASA_BASE_URL') or DEFAULT_BASE_URL).rstrip('/') + '/chat/completions'
-    headers = {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + api_key(key)}
+    headers = {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key}
     send = opener or urllib.request.urlopen
     json_mode = True
-    attempt = 0
     while True:
         body = build_request(prompt, model, config, json_mode)
         try:
-            payload = _send_once(url, body, headers, send, clock)
+            payload = _post(url, body, headers, send)
             if 'response_format' in body and not _content(payload):
                 # 스키마를 걸면 빈 답을 주는 모델이 있다 (gpt-oss: 추론 형식과 충돌). 한 단계 낮춰 다시 보낸다.
                 # 형식을 아예 빼면 gpt-oss는 JSON 대신 글로 답하므로 json_object를 먼저 시도한다.
@@ -193,19 +293,9 @@ def _generate(prompt, model, key, config, opener, retries, sleep, base_url, cloc
                 json_mode = _downgrade(body)
                 continue
             failure = classify(error.code, detail, model)
-            wait = parse_seconds(error.headers.get('Retry-After')) if error.headers else None
-            failure.retry_after = wait
-            retryable = error.code in (429, 500, 502, 503, 504)
-            if retryable and attempt < retries and (wait or 3) <= MAX_WAIT:
-                attempt += 1
-                sleep(wait or 3)
-                continue
+            failure.retry_after = parse_seconds(error.headers.get('Retry-After')) if error.headers else None
             raise failure
         except urllib.error.URLError as error:
-            if attempt < retries:
-                attempt += 1
-                sleep(3)
-                continue
             raise GeminiError('AI 서버에 연결하지 못했습니다: %s' % error.reason)
         except (TimeoutError, OSError, http.client.HTTPException, ValueError) as error:
             # 읽기 시간 초과·연결 끊김·깨진 본문. 시간 초과를 다시 보내면 같은 시간을 또 기다리므로 재시도하지 않는다.

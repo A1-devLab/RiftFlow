@@ -114,20 +114,24 @@ def gemini_generator(settings):
         return wrapped
     call_gemini = (lambda prompt, **options: generate(prompt, model=settings.gemini_model, key=settings.gemini_api_key,
                                                       retries=0, **options)) if settings.gemini_api_key else None
-    if settings.llm_provider == "hasa" and settings.hasa_api_key:
+    if settings.llm_provider == "hasa":
+        from rag.llm import FALLBACK_SLOT_WAIT, NO_FALLBACK_SLOT_WAIT
         from rag.openai_compat import generate as call_hasa
+        fallback = call_gemini if settings.llm_fallback == "gemini" else None
+        # 대체 모델이 없으면 키가 모두 바쁠 때 차례를 길게 기다린다 (앱은 180초까지 기다린다).
+        wait = FALLBACK_SLOT_WAIT if fallback else NO_FALLBACK_SLOT_WAIT
         hasa = lambda prompt, **options: call_hasa(prompt, model=settings.hasa_model, key=settings.hasa_api_key,
-                                                   retries=1, **options)
-        return public(with_fallback(hasa, call_gemini))
-    return public(call_gemini or (lambda prompt, **options: generate(prompt, model=settings.gemini_model,
-                                                                     key=settings.gemini_api_key, retries=0, **options)))
+                                                   retries=1, slot_wait=wait, **options)
+        return public(with_fallback(hasa, fallback))
+    return public(lambda prompt, **options: generate(prompt, model=settings.gemini_model,
+                                                     key=settings.gemini_api_key, retries=0, **options))
 
 
 def create_app(settings=None, gateway=None, clock=time.time, generate=None):
     settings = settings or Settings.from_env()
     db = Database(settings.db_path)
     riot = RiotData(db, gateway or RiotGateway(settings), clock=clock)
-    ai_enabled = bool(generate or settings.hasa_api_key or settings.gemini_api_key)
+    ai_enabled = bool(generate or (settings.hasa_api_key if settings.llm_provider == "hasa" else settings.gemini_api_key))
     ai = AiService(db, settings.knowledge_db_path, generate or gemini_generator(settings))
     registrations = defaultdict(deque)
     registrations_lock = threading.Lock()

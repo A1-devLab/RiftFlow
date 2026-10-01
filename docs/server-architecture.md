@@ -1,5 +1,7 @@
 # RiftFlow 서버 구조 설계
 
+> 1.0.0부터 AI는 HASA Open AI Service Hub(OpenAI 호환, 기본 nemotron-super-120b)만 씁니다. 아래의 Gemini 설명은 설계 당시 기록이며, 키를 서버에만 두는 구조는 그대로입니다. 설정은 README의 환경변수 표를 보세요.
+
 작성일: 2026-09-27. 상태: **1단계(라이엇 데이터)와 2단계(AI 4개 경로, 룬 추천 공유 캐시, 기기별 AI 한도) 구현.** 3단계 이후는 설계안.
 
 지금은 미니 PC 한 대에 **systemd + SQLite + Caddy(HTTPS) + DuckDNS**로 배포합니다 (`docs/server-deploy.md`).

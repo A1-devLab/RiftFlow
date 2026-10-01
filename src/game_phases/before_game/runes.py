@@ -41,10 +41,13 @@ rune_catalog의 트리마다 keystones(핵심 룬)와 row1, row2, row3(일반 �
 
 reasons 작성.
 - 핵심 룬, 주 트리 3개, 보조 트리 2개마다 한 문장씩 쓴다. 공식 룬 설명의 효과를 이번 게임 상황과 이어서 설명한다.
-- 이유 문장에는 숫자 ID 대신 룬·챔피언 이름을 쓴다.
+- 이유 문장에는 숫자 ID 대신 룬·챔피언 이름을 쓴다. 룬 이름은 rune_catalog에 있는 한국어 공식 이름 그대로 쓴다 (영어 이름 금지).
+- reasons의 rune_id는 이번에 고른 룬의 숫자 ID다. 핵심 룬, 주 트리 3개, 보조 트리 2개 순서로 6개를 쓴다.
 - summary와 reasons에는 이번에 고른 페이지의 룬만 쓴다. rune_catalog에 없는 룬 이름은 이번 패치에 없는 것이니 쓰지 않는다.
 - summary는 페이지 전체의 방향을 한두 문장으로 쓴다. user_requests에 요청이 있었다면 그것을 어떻게 반영했는지 밝힌다. 요청과 다르게 고른 부분이 있으면 이유를 밝힌다.
-한국어로 쓰고 마크다운 서식을 쓰지 않는다."""
+한국어로만 쓴다. burst, scaling 같은 영어 단어를 섞지 말고 '순간 피해', '후반 성장'처럼 한국어로 쓴다. 챔피언 이름도 한국어로 쓴다.
+이유에는 그 룬의 공식 효과(effect)에 적힌 내용만 쓴다. 효과에 없는 수치나 기능을 지어내지 않는다.
+마크다운 서식을 쓰지 않는다."""
 
 _ID_LIST = {'type': 'ARRAY', 'items': {'type': 'INTEGER'}}
 RESPONSE_SCHEMA = {
@@ -175,9 +178,12 @@ def rune_reasons(items, names):
     """
     by_name = {name: rune_id for rune_id, name in names.items()}
     reasons, used = [], set()
-    for item in items or []:
+    items = items if isinstance(items, list) else []
+    for item in items:
         if isinstance(item, dict):
             rune_id = item.get('rune_id')
+            if isinstance(rune_id, str) and rune_id.strip().isdigit():
+                rune_id = int(rune_id)
             rune_id = by_name.get(item.get('rune') or item.get('name'), rune_id) if rune_id not in names else rune_id
             text = str(item.get('reason') or '').strip()
         elif isinstance(item, str):
@@ -189,6 +195,12 @@ def rune_reasons(items, names):
         if rune_id in names and text and rune_id not in used:
             used.add(rune_id)
             reasons.append({'rune': names[rune_id], 'reason': text})
+    # 이유를 룬 수만큼 썼는데 하나도 이어지지 않으면(영어 룬 이름 등) 요청한 순서(핵심, 주 3개, 보조 2개)대로 붙인다.
+    if not reasons and len(items) == len(names):
+        for rune_id, item in zip(names, items):
+            text = str(item.get('reason') or '').strip() if isinstance(item, dict) else str(item).strip()
+            if text:
+                reasons.append({'rune': names[rune_id], 'reason': text})
     return reasons
 
 
