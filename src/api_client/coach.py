@@ -6,6 +6,9 @@
 from contracts.riot import RiotApiError
 from game_phases import payloads
 
+# 서버는 HASA(최대 90초)가 실패하면 Gemini(최대 60초)로 넘기므로 그보다 길게 기다린다.
+AI_TIMEOUT = 180
+
 
 def _answer_failure(error):
     return {'answer': None, 'message': str(error), 'generated': False}
@@ -16,7 +19,7 @@ def recommend_runes(client, view, *, champion, opponent, user_requests, recent_p
             'view': payloads.pick_view(view), 'user_requests': payloads.user_requests(user_requests),
             'recent_pages': payloads.recent_pages(recent_pages)}
     try:
-        return client.post_json('/v1/runes/recommend', body)
+        return client.post_json('/v1/runes/recommend', body, timeout=AI_TIMEOUT)
     except RiotApiError as error:
         return {'page': None, 'summary': None, 'reasons': [], 'generated': False, 'message': str(error), 'attempts': 0}
 
@@ -27,7 +30,7 @@ def coach_pick(client, view, question, *, champion, opponent, user_requests, obs
             'user_requests': payloads.user_requests(user_requests),
             'observations': payloads.observations(observations), 'history': payloads.history(history)}
     try:
-        return client.post_json('/v1/coach/pick', body)
+        return client.post_json('/v1/coach/pick', body, timeout=AI_TIMEOUT)
     except RiotApiError as error:
         return _answer_failure(error)
 
@@ -36,7 +39,7 @@ def coach_in_game(client, view, question, history=None):
     try:
         return client.post_json('/v1/coach/in-game', {'question': payloads.text(question, 1000),
                                                       'view': payloads.live_view(view),
-                                                      'history': payloads.history(history)})
+                                                      'history': payloads.history(history)}, timeout=AI_TIMEOUT)
     except RiotApiError as error:
         return _answer_failure(error)
 
@@ -45,7 +48,7 @@ def coach_general(client, question, context, history=None):
     try:
         result = client.post_json('/v1/coach/general', {'question': payloads.text(question, 1000),
                                                         'context': payloads.general_context(context),
-                                                        'history': payloads.history(history)})
+                                                        'history': payloads.history(history)}, timeout=AI_TIMEOUT)
     except RiotApiError as error:
         message = str(error)
         return {'status': 'model_error', 'message': message, 'answer': None, 'generated': False, 'error': message,

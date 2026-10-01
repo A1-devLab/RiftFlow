@@ -148,9 +148,11 @@ class PlayerRow(QFrame):
             self.portraits.attach(self.portrait, entry['champion'])
         self.champion.setText(entry['champion'] + ('  (나)' if entry.get('is_me') else ''))
         self.player.setText('부활까지 %d초' % entry['respawn_timer'] if entry['is_dead'] else entry['name'])
-        self.player.setObjectName('rowDead' if entry['is_dead'] else 'rowPlayer')
-        self.player.style().unpolish(self.player)
-        self.player.style().polish(self.player)
+        name = 'rowDead' if entry['is_dead'] else 'rowPlayer'
+        if self.player.objectName() != name:            # 2.5초마다 10줄의 스타일을 다시 계산하지 않게
+            self.player.setObjectName(name)
+            self.player.style().unpolish(self.player)
+            self.player.style().polish(self.player)
         self.level.setText('Lv %d' % entry['level'])
         self.kda.setText(entry['kda'])
         rate = entry.get('cs_per_min')
@@ -286,13 +288,13 @@ class InGamePage(QWidget):
     askRequested = Signal(object)
     refreshRequested = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, assets=None, portraits=None, parent=None):
         super().__init__(parent)
         self.setObjectName('inGame')
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(STYLE)
-        self.portraits = ChampionPortraits(self)
-        self.assets = MatchAssets(self)
+        self.portraits = portraits or ChampionPortraits(self)
+        self.assets = assets or MatchAssets(self)
         self.view = {'in_game': False}
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -384,14 +386,15 @@ class InGamePage(QWidget):
 
     def show_loading(self):
         if self.view.get('in_game'):
-            self.show_disconnected()
+            self.show_disconnected(keep_items=True)     # 추천 아이템은 새 게임이 시작될 때만 지운다
         self.state.setText('게임을 불러오고 있습니다. 로딩이 끝나면 스코어보드를 자동으로 표시합니다.')
 
-    def show_disconnected(self):
+    def show_disconnected(self, keep_items=False):
         self.view = {'in_game': False}
         self.clock.setText('--:--')
         self.state.setText('게임 접속을 기다리고 있습니다. 게임이 시작되면 자동으로 이 화면으로 넘어옵니다.')
-        self.items.clear()
+        if not keep_items:
+            self.items.clear()
         self.gold_bar.set_values(0, 0)
         self.gold_text.setText('')
         self.ally.show_team([])
@@ -405,7 +408,10 @@ class InGamePage(QWidget):
         self.askRequested.emit({'question': question, 'view': self.view})
 
     def submit(self):
-        self._emit(self.question.text().strip())
+        question = self.question.text().strip()
+        if question and self.send.isEnabled():
+            self._emit(question)
+            self.question.clear()           # 다른 화면처럼 보낸 질문은 지운다 (Enter를 또 눌러 같은 질문이 가지 않게)
 
     def set_busy(self, busy):
         for widget in (self.send, self.recommend, self.refresh):

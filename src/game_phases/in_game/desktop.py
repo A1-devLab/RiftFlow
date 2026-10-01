@@ -155,16 +155,20 @@ def answer_in_game(db_path, view, question, *, generate, history=None):
         return recommend_items(db_path, view, question, generate=generate, prompt_player=prompt_player)
     me = view.get('me')
     enemies = view.get('enemies') or []
-    profiles = champion_profiles(db_path)
+    item_map = item_map_for(view.get('game_mode'), view.get('map_number'))
+    try:
+        profiles = champion_profiles(db_path)
+    except (sqlite3.Error, OSError, ValueError):
+        profiles = {}
     composition = team_composition([e['champion'] for e in enemies], profiles)
-    wants_items = is_item_question(question)
     items, champions = [], []
     try:
-        source = DocumentSource(partial(get_documents, db_path=db_path), kinds=('item', 'champion'))
+        # 이 모드의 상점 기준으로 찾는다. 예전에는 칼바람에서도 협곡 아이템·가격이 섞였다.
+        source = DocumentSource(partial(get_documents, db_path=db_path, item_map=item_map), kinds=('item', 'champion'))
         chunks = source.chunks(None)
         owned = {item['name'] for item in (me or {}).get('items', [])}
         query = ' '.join([question, _item_hints(me, composition, profiles)])
-        for row in search([c for c in chunks if c['kind'] == 'item'], query, top_k=8 if wants_items else 4):
+        for row in search([c for c in chunks if c['kind'] == 'item'], query, top_k=4):
             chunk = row['chunk']
             if chunk['subject_name'] in owned:
                 continue
@@ -182,9 +186,6 @@ def answer_in_game(db_path, view, question, *, generate, history=None):
                                   'text': chunk['text'][:600]})
     except (sqlite3.Error, OSError, ValueError):
         items, champions = [], []
-    if wants_items and not items:
-        return {'answer': None, 'generated': False,
-                'message': '추천 근거로 쓸 공식 아이템 자료가 없습니다. 설정 및 데이터에서 공식 자료를 먼저 업데이트해 주세요.'}
     payload = {'question': question, 'clock': view.get('clock'),
                'perspective_known': view.get('perspective_known'),
                'me': prompt_player(me) if me else None,
@@ -195,7 +196,7 @@ def answer_in_game(db_path, view, question, *, generate, history=None):
                'official_items': items, 'official_champions': champions[:6],
                'game_mode': view.get('mode_name') or view.get('game_mode'),
                'conversation': history or [],
-               'current_patch_names': current_names(db_path, item_map_for(view.get('game_mode'), view.get('map_number')))}
+               'current_patch_names': current_names(db_path, item_map)}
     prompt = {'system': SYSTEM, 'user': json.dumps(payload, ensure_ascii=False)}
     try:
         reply = generate(prompt)

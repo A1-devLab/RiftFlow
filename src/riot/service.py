@@ -5,6 +5,7 @@ docs/interfaces.md에 정의된 riot 모듈의 실제 기능 구현.
 API 원본 응답을 여기서 contracts의 공통 형식으로 변환한다.
 """
 
+import dataclasses
 import os
 from typing import List, Optional
 
@@ -14,12 +15,19 @@ from contracts.riot import (
     PlayerIdentity,
     PlayerNotFound,
     RankInfo,
+    RiotApiError,
 )
 
 from .client import RiotApiClient
 from .config import RiotConfig
 
 _client: Optional[RiotApiClient] = None
+
+
+def _build(cls, data):
+    """서버 JSON으로 계약 객체를 만든다. 서버가 필드를 늘려도 이미 설치된 앱이 TypeError로 죽지 않게 아는 필드만 쓴다."""
+    names = {field.name for field in dataclasses.fields(cls)}
+    return cls(**{key: value for key, value in (data or {}).items() if key in names})
 
 
 def _server():
@@ -56,7 +64,7 @@ def get_player(riot_id: str) -> PlayerIdentity:
         data = server.get_json(f"/v1/riot/account/{server.quote(game_name)}/{server.quote(tag_line)}")
         if data is None:
             raise PlayerNotFound(riot_id)
-        return PlayerIdentity(**data)
+        return _build(PlayerIdentity, data)
 
     client = _get_client()
 
@@ -94,8 +102,8 @@ def get_recent_history(puuid: str, count: int = 20) -> dict:
         data = server.get_json(f"/v1/riot/matches/{server.quote(puuid)}", params={"count": count})
         if data is None:
             raise MatchDataUnavailable(puuid)
-        return {"summaries": [MatchSummary(**m) for m in data["matches"]],
-                "observations": data["observations"], "details": []}
+        return {"summaries": [_build(MatchSummary, m) for m in data.get("matches") or [] if isinstance(m, dict)],
+                "observations": data.get("observations") or [], "details": []}
     summaries, details = get_recent_matches_with_details(puuid, count)
     observations = [o for o in (matchup_observation(d, puuid) for d in details) if o]
     return {"summaries": summaries, "observations": observations, "details": details}
@@ -140,7 +148,12 @@ def get_recent_matches_with_details(puuid: str, count: int):
         raise MatchDataUnavailable(puuid)
     summaries, details = [], []
     for match_id in match_ids:
-        detail = client.get_region(f"/lol/match/v5/matches/{match_id}")
+        try:
+            detail = client.get_region(f"/lol/match/v5/matches/{match_id}")
+        except RiotApiError:
+            if not details:
+                raise
+            break       # 한도·일시 오류: 이미 받은 경기는 버리지 않고 돌려준다
         if detail is None:
             continue
         summaries.append(_to_match_summary(detail, puuid))
@@ -158,7 +171,7 @@ def get_solo_rank(puuid: str) -> Optional[RankInfo]:
     server = _server()
     if server is not None:
         data = server.get_json(f"/v1/riot/rank/{server.quote(puuid)}")
-        return RankInfo(**data) if data else None
+        return _build(RankInfo, data) if data else None
 
     client = _get_client()
 

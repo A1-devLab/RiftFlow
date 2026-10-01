@@ -97,6 +97,11 @@ class RuneRecommendationTests(unittest.TestCase):
         with patch('knowledge.collector.fetch', side_effect=OSError('offline')):
             failed = recommend_runes(old, self.personal, None, VIEW, generate=generate, download=True)
         self.assertIn('내려받지 못했습니다', failed['message'])
+        with patch('knowledge.collector.fetch', return_value='{}') as fetch:
+            recommend_runes(old, self.personal, None, VIEW, generate=generate, download=True)
+            fetch.assert_not_called()                     # 실패 직후에는 자동 요청마다 30초씩 다시 받지 않는다
+        import knowledge.runes
+        knowledge.runes._download_failed.clear()          # 5분이 지난 것으로 본다
         with patch('knowledge.collector.fetch', return_value=json.dumps(TREES, ensure_ascii=False)) as fetch:
             demo = recommend_runes(old, self.personal, None, VIEW, generate=generate)
             fetch.assert_not_called()

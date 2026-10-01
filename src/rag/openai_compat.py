@@ -26,7 +26,7 @@ DEFAULT_BASE_URL = 'https://open.hasa.re.kr/v1'
 DEFAULT_MODEL = 'qwen3-next-80b'
 BLOCK_SECONDS = 600
 _blocked = {}              # 모델 → 다시 시도할 시각 (키에 권한이 없던 모델)
-TIMEOUT = 150             # 공용 GPU가 붐비면 추론형 모델(gpt-oss) 룬 추천이 90초를 넘긴 적이 있다
+TIMEOUT = 90              # 넘기면 Gemini로 넘어간다. 앱은 AI 요청을 180초까지 기다린다 (api_client.coach.AI_TIMEOUT)
 MAX_WAIT = 20              # 429에 Retry-After가 이보다 짧으면 기다렸다 한 번 더 보낸다 (동시·분당 한도)
 DEFAULT_CONFIG = {'temperature': 0.2, 'maxOutputTokens': 4096}
 _slots = threading.BoundedSemaphore(max(1, int(os.environ.get('HASA_CONCURRENCY') or 1)))
@@ -87,9 +87,8 @@ def read_text(payload):
     choices = payload.get('choices') or []
     if not choices:
         raise GeminiError('모델이 답변을 돌려주지 않았습니다.')
-    choice = choices[0]
-    reason = choice.get('finish_reason') or '알 수 없음'
-    text = THINK.sub('', (choice.get('message') or {}).get('content') or '').strip()
+    reason = choices[0].get('finish_reason') or '알 수 없음'
+    text = _content(payload)
     if not text:
         raise GeminiError('답변이 비어 있습니다. 종료 사유: %s' % reason)
     return text, reason

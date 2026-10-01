@@ -6,26 +6,7 @@
 """
 from pathlib import Path
 
-from .documents import get_documents
-
-_cache = {}
-
-
-def _cached(kind, db_path, builder):
-    """같은 DB 파일이 그대로면 이전 결과를 재사용한다 (폴링 중 반복 조회 방지)."""
-    path = Path(db_path)
-    try:
-        stamp = path.stat().st_mtime_ns, path.stat().st_size
-    except OSError:
-        stamp = None
-    key = (kind, str(path.resolve() if path.exists() else path))
-    hit = _cache.get(key)
-    if hit is not None and hit[0] == stamp:
-        return hit[1]
-    value = builder(db_path)
-    _cache[key] = (stamp, value)
-    return value
-
+from .documents import cached as _cached, get_documents
 
 def _build_item_catalog(db_path):
     catalog = {}
@@ -44,7 +25,7 @@ def _build_item_catalog(db_path):
 
 def item_catalog(db_path):
     """{아이템 ID: {name, gold_total, version, text}}. 수집한 자료가 없으면 빈 dict."""
-    return _cached('item', db_path, _build_item_catalog)
+    return _cached('item-catalog', db_path, _build_item_catalog)
 
 
 def item_names(items, catalog):
@@ -95,7 +76,7 @@ def _build_champion_profiles(db_path):
 
 def champion_profiles(db_path):
     """{챔피언 ID 또는 한국어 이름(소문자): {id, name, tags, resource, damage_rating}}."""
-    return _cached('champion', db_path, _build_champion_profiles)
+    return _cached('champion-profiles', db_path, _build_champion_profiles)
 
 
 def team_composition(champions, profiles):

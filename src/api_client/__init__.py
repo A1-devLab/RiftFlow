@@ -42,9 +42,9 @@ class ServerClient:
             headers["Authorization"] = "Bearer " + token
         return headers
 
-    def _send(self, method, path, **kwargs):
+    def _send(self, method, path, timeout=20, **kwargs):
         try:
-            return self.session.request(method, self.base_url + path, timeout=20, **kwargs)
+            return self.session.request(method, self.base_url + path, timeout=timeout, **kwargs)
         except requests.exceptions.RequestException as error:
             raise RiotApiError("RiftFlow 서버에 연결하지 못했습니다. 인터넷 연결을 확인하세요.") from error
 
@@ -64,7 +64,11 @@ class ServerClient:
             response = self._send("POST", "/v1/devices", headers=self._headers())
             if response.status_code != 200:
                 raise self._error(response)
-            self._token = response.json()["token"]
+            try:
+                self._token = response.json()["token"]
+            except (ValueError, KeyError, TypeError) as error:
+                # 공용 와이파이 로그인 페이지처럼 HTML이 200으로 오는 경우
+                raise RiotApiError("RiftFlow 서버 응답을 읽지 못했습니다. 인터넷 연결을 확인하세요.") from error
             self.token_path.parent.mkdir(parents=True, exist_ok=True)
             self.token_path.write_text(self._token, encoding="utf-8")
             return self._token
@@ -76,8 +80,11 @@ class ServerClient:
         except (ValueError, KeyError, TypeError):
             message = "RiftFlow 서버 요청이 실패했습니다 (%s)." % response.status_code
         if response.status_code in (429, 503):
-            retry = response.headers.get("Retry-After")
-            error = RateLimitExceeded(float(retry) if retry else None)
+            try:
+                retry = float(response.headers.get("Retry-After") or "")
+            except ValueError:          # 프록시가 HTTP 날짜를 보내는 경우
+                retry = None
+            error = RateLimitExceeded(retry)
             error.args = (message,)
             return error
         return RiotApiError(message)
@@ -86,15 +93,19 @@ class ServerClient:
         """GET 요청. 404는 None(찾을 수 없음), 그 밖의 실패는 예외. 잠깐 기다리라는 응답은 한 번 재시도한다."""
         return self._json("GET", path, params=params)
 
-    def post_json(self, path, body):
-        return self._json("POST", path, json=body)
+    def post_json(self, path, body, timeout=20):
+        """AI 요청은 timeout을 길게 준다. 서버는 AI 응답을 기다리는데 앱이 먼저 끊으면 결과도 못 받고 한도만 쓴다."""
+        return self._json("POST", path, json=body, timeout=timeout)
 
     def _json(self, method, path, **kwargs):
         renewed = waited = False
         while True:
             response = self._send(method, path, headers=self._headers(self.token()), **kwargs)
             if response.status_code == 200:
-                return response.json()
+                try:
+                    return response.json()
+                except ValueError as error:
+                    raise RiotApiError("RiftFlow 서버 응답을 읽지 못했습니다. 인터넷 연결을 확인하세요.") from error
             if response.status_code == 404:
                 return None
             if response.status_code == 401 and not renewed:

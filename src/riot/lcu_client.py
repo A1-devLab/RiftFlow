@@ -59,6 +59,7 @@ from contracts.riot import (
     ClientNotRunning,
     PlayerIdentity,
     PostGameSummary,
+    RateLimitExceeded,
     RiotApiError,
     RunePageSlotsFull,
 )
@@ -83,18 +84,29 @@ def _cached_process_alive(pid: int) -> bool:
         return False
 
 
+# 클라이언트를 못 찾은 시각. 롤이 꺼져 있을 때 폴링(2.5초)·로그인 감시(2초)가 매번 전체를 훑지 않게 잠시 기억한다.
+_missing_since: Optional[float] = None
+_MISSING_TTL = 3.0
+
+
 def _find_lcu_credentials() -> Optional[Tuple[int, str]]:
-    """실행 중인 LeagueClientUx 프로세스에서 포트/비밀번호를 찾는다."""
-    global _credentials_cache
+    """실행 중인 LeagueClientUx 프로세스에서 포트/비밀번호를 찾는다.
+
+    모든 프로세스의 명령줄(cmdline)을 읽으면 윈도우에서 한 번에 0.6초쯤 걸렸다 (프로세스 350개, 이름만 읽으면 3.5ms).
+    그래서 이름으로 먼저 거르고 클라이언트 프로세스의 명령줄만 읽는다.
+    """
+    global _credentials_cache, _missing_since
     if _credentials_cache is not None and _cached_process_alive(_credentials_cache[0]):
         return _credentials_cache[1], _credentials_cache[2]
     _credentials_cache = None
-    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+    if _missing_since is not None and time.monotonic() - _missing_since < _MISSING_TTL:
+        return None
+    for proc in psutil.process_iter(["pid", "name"]):
         try:
             if proc.info["name"] not in _PROCESS_NAMES:
                 continue
-            cmdline = proc.info["cmdline"] or []
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            cmdline = proc.cmdline() or []
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.Error):
             continue
 
         port = password = None
@@ -105,7 +117,9 @@ def _find_lcu_credentials() -> Optional[Tuple[int, str]]:
                 password = arg.split("=", 1)[1]
         if port and password:
             _credentials_cache = (proc.info["pid"], port, password)
+            _missing_since = None
             return port, password
+    _missing_since = time.monotonic()
     return None
 
 
@@ -309,6 +323,9 @@ def _parse_champ_select_session(raw: dict) -> ChampSelectSession:
     )
 
 
+_mode_cache: Optional[Tuple[Any, Tuple[Optional[str], Optional[int]]]] = None
+
+
 def get_champ_select_session() -> Optional[ChampSelectSession]:
     """현재 챔피언 선택(픽창)의 픽/밴 현황을 가져온다.
 
@@ -330,10 +347,17 @@ def get_champ_select_session() -> Optional[ChampSelectSession]:
         return None
     session = _parse_champ_select_session(raw)
     # 픽창 세션에는 게임 모드가 없어서 게임 진행 세션에서 따로 읽는다 (칼바람·아레나 구분용).
-    flow = _lcu_get(port, password, "/lol-gameflow/v1/session")
-    queue = ((flow or {}).get("gameData") or {}).get("queue") or {} if isinstance(flow, dict) else {}
-    return dataclasses.replace(session, game_mode=queue.get("gameMode") or None,
-                               queue_id=queue.get("id") if isinstance(queue.get("id"), int) else None)
+    # 진행 세션은 크고 한 픽창 동안 모드가 바뀌지 않으므로 픽창(gameId)마다 한 번만 읽는다.
+    global _mode_cache
+    game_id = raw.get("gameId") if isinstance(raw, dict) else None
+    if _mode_cache is None or _mode_cache[0] != game_id or game_id is None:
+        flow = _lcu_get(port, password, "/lol-gameflow/v1/session")
+        queue = ((flow or {}).get("gameData") or {}).get("queue") or {} if isinstance(flow, dict) else {}
+        mode = (queue.get("gameMode") or None, queue.get("id") if isinstance(queue.get("id"), int) else None)
+        _mode_cache = (game_id, mode) if mode[0] else None
+    else:
+        mode = _mode_cache[1]
+    return dataclasses.replace(session, game_mode=mode[0], queue_id=mode[1])
 
 
 def get_end_of_game_stats() -> Optional[dict]:
@@ -572,25 +596,52 @@ def start_champ_select_watcher(
 def start_login_watcher(
     on_login: Callable[[PlayerIdentity], None],
     interval: float = 2.0,
+    on_error: Optional[Callable[[str], None]] = None,
+    max_delay: float = 60.0,
 ) -> threading.Thread:
-    """백그라운드 스레드에서 로그인 여부를 주기적으로 확인하다가,
-    로그인이 감지되면 on_login(player)를 한 번 호출하고 스레드를 종료한다.
+    """백그라운드 스레드에서 로그인을 감시한다. 계정이 바뀔 때마다 on_login(player)를 부른다.
 
-    UI 프레임워크(Tkinter, PyQt 등)에 상관없이 쓸 수 있게 별도 스레드로 동작한다.
-    주의: on_login 콜백에서 UI 위젯을 직접 갱신하면 스레드 안전 문제가 생길 수 있으니,
-    각 프레임워크의 메인 스레드 전달 방식(예: Tkinter의 root.after())을 거쳐야 한다.
+    - 로그인한 Riot ID는 로컬 클라이언트(LCU)에서 싸게 확인하고, 바뀌었을 때만 Riot(또는 서버)에 조회한다.
+      예전에는 한 번 감지하면 끝나서, 클라이언트를 다시 켜 다른 계정으로 로그인해도 이전 계정 전적을 보여 줬다.
+    - 통신 오류는 감시를 멈추지 않고 점점 길게 쉬었다 다시 시도한다(최대 max_delay초). 한도 초과는 Retry-After를 따른다.
+      예전에는 RiotApiError만 잡아서 와이파이가 잠깐 끊겨도 스레드가 조용히 죽었다.
+    - 키가 없거나 만료됐으면(InvalidApiKey) 다시 해도 같으므로 on_error(안내 문장)를 부르고 멈춘다.
+    - thread.stop()으로 멈출 수 있다 (앱 종료 시).
+
+    on_login/on_error는 이 스레드에서 불리므로 UI는 시그널 등으로 메인 스레드에 넘겨야 한다.
     """
+    from .client import InvalidApiKey
+
+    stop = threading.Event()
 
     def _watch():
-        while True:
+        last, delay = None, interval
+        while not stop.is_set():
             try:
-                player = get_current_summoner()
-                on_login(player)
+                credentials = _find_lcu_credentials()
+                if credentials is None:
+                    last = None                     # 클라이언트를 끄면 다음 로그인은 새로 알린다
+                else:
+                    data = _current_summoner_data(credentials) or {}
+                    riot_id = (f"{data['gameName']}#{data['tagLine']}"
+                               if data.get("gameName") and data.get("tagLine") else None)
+                    if riot_id and riot_id != last:
+                        player = get_current_summoner()
+                        last = riot_id
+                        on_login(player)
+                delay = interval
+            except InvalidApiKey as error:
+                if on_error is not None:
+                    on_error(str(error))
                 return
-            except RiotApiError:
-                time.sleep(interval)
+            except RateLimitExceeded as error:
+                delay = max(interval, min(max_delay, error.retry_after_seconds or 30.0))
+            except Exception:
+                delay = min(max_delay, max(interval, delay * 2))
+            stop.wait(delay)
 
     thread = threading.Thread(target=_watch, daemon=True)
+    thread.stop = stop.set
     thread.start()
     return thread
 

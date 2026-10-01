@@ -1,5 +1,4 @@
 """Out-game dashboard based on the team's client mock-up."""
-import html
 from datetime import datetime
 
 from ui.portraits import ChampionPortraits
@@ -53,10 +52,10 @@ class OutGamePage(QWidget):
     profileRequested = Signal()
     matchRequested = Signal(str)
 
-    def __init__(self, parent=None):
+    def __init__(self, assets=None, portraits=None, parent=None):
         super().__init__(parent)
-        self.portraits = ChampionPortraits(self)
-        self.assets = MatchAssets(self)
+        self.portraits = portraits or ChampionPortraits(self)
+        self.assets = assets or MatchAssets(self)
         self.setObjectName("outGame")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(STYLE)
@@ -71,6 +70,7 @@ class OutGamePage(QWidget):
         left.addWidget(self._profile_card())
         left.addWidget(self._summary_card())
         left.addWidget(self._matches_panel(), 1)
+        self.pending = None
         self.history_stack = QStackedWidget()
         loading = QFrame(objectName="loadingPanel")
         loading_box = QVBoxLayout(loading)
@@ -256,7 +256,7 @@ class OutGamePage(QWidget):
     def _bubble(self, text, user):
         bubble = QLabel(text)
         bubble.setWordWrap(True)
-        bubble.setTextFormat(bubble.textFormat())
+        bubble.setTextFormat(Qt.PlainText)
         bubble.setObjectName("userBubble" if user else "coachBubble")
         bubble.setMaximumWidth(330)
         return bubble
@@ -280,6 +280,7 @@ class OutGamePage(QWidget):
             line.addWidget(bubble)
             bubble = row
         self.messages.insertWidget(self.messages.count() - 1, bubble)
+        return bubble
 
     def submit(self):
         question = self.question.text().strip()
@@ -287,21 +288,36 @@ class OutGamePage(QWidget):
             return
         self._add(question, True)
         self.question.clear()
+        self._clear_pending()
+        self.pending = self._add("자료를 찾고 있습니다…")
         self.askRequested.emit(question)
 
     def set_busy(self, busy):
+        # 예전에는 모든 작업(룬 추천, 전적 새로고침 등)마다 '자료를 찾고 있습니다…' 말풍선을 쌓았다.
+        # 이제 질문을 보낼 때만 하나 띄우고 답이 오면 지운다 (submit, _clear_pending).
         self.send.setEnabled(not busy)
         self.question.setEnabled(not busy)
         self.refresh_button.setEnabled(not busy)
-        if busy:
-            self._add("자료를 찾고 있습니다…")
+
+    def _clear_pending(self):
+        if self.pending is not None:
+            self.messages.removeWidget(self.pending)
+            self.pending.deleteLater()
+            self.pending = None
 
     def show_answer(self, result):
+        self._clear_pending()
         answer = result.get("answer") or result.get("message") or result.get("error")
         if not answer:
             answer = "관련 근거를 찾았어요. Gemini를 사용하지 않아 자료 목록만 표시합니다."
-        self._add(html.unescape(str(answer)))
+        self._add(str(answer))
         self._scroll_bottom()
+
+    def show_unavailable(self, message):
+        """전적을 불러오지 못했을 때 로딩 화면을 끝내고 이유와 '클라이언트 확인' 버튼을 보여 준다."""
+        self.loading_timer.stop()
+        self.history_stack.setCurrentIndex(1)
+        self.rank.setText(message)
 
     def add_exchange(self, question, answer):
         """다른 화면(AI에게 질문)에서 나눈 대화도 이 채팅에 보이게 한다."""
@@ -322,6 +338,7 @@ class OutGamePage(QWidget):
         self._scroll_bottom()
 
     def show_error(self, message):
+        self._clear_pending()
         self._add(message)
         self._scroll_bottom()
 

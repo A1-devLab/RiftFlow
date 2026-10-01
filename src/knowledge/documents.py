@@ -50,23 +50,91 @@ def store_item(entity_id, entity, map_id="11"):
     return True
 
 
-def sr_store_item(entity_id, entity):
-    """소환사의 협곡 상점에서 실제로 살 수 있는 아이템인지 (store_item의 협곡판).
+_cache = {}
 
-    Data Dragon item.json에는 협곡 상점 아이템 말고도 아레나·특수 모드 복사본(6자리 ID, 예: 223089),
-    상점에 없는 아이템(inStore: false), 특정 챔피언·오른 전용 아이템이 함께 들어 있다(16.19.1 기준 870개).
-    협곡 맵 표시만 보면 모드 복사본(예: 663056)이 섞여, AI가 이번 패치 협곡에서 살 수 없는 아이템을 추천했다.
+
+def cached(kind, db_path, builder):
+    """DB 파일(변경 시각·크기)이 그대로면 이전 결과를 재사용한다. 폴링·질문마다 같은 DB를 다시 읽지 않게 한다.
+
+    자료를 업데이트하면 파일이 바뀌므로 자동으로 새로 만든다. (before_game·in_game에 같은 함수가 두 벌 있던 것을 합침)
     """
-    return store_item(entity_id, entity, "11")
+    path = Path(db_path)
+    try:
+        stat = path.stat()
+        stamp = (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        stamp = None
+    key = (kind, str(path.resolve() if path.exists() else path))
+    hit = _cache.get(key)
+    if hit is not None and hit[0] == stamp:
+        return hit[1]
+    value = builder(db_path)
+    _cache[key] = (stamp, value)
+    return value
 
 
-def read_rows(db_path):
+def has_records(db_path):
+    """수집한 자료가 하나라도 있는지. 시작할 때 전체 문서를 읽지 않고 한 줄만 확인한다."""
+    try:
+        with closing(sqlite3.connect(str(db_path))) as db:
+            return db.execute("SELECT 1 FROM records LIMIT 1").fetchone() is not None
+    except sqlite3.Error:
+        return False
+
+
+def latest_versions(db, kinds=None):
+    """{종류: 최신 버전}. 버전은 숫자 기준으로 비교한다 (글자로 비교하면 '16.9.1'이 '16.19.1'보다 크다)."""
+    latest = {}
+    for kind, version in db.execute("SELECT DISTINCT kind, version FROM records"):
+        if (kinds is None or kind in kinds) and (kind not in latest or version_key(version) > version_key(latest[kind])):
+            latest[kind] = version
+    return latest
+
+
+def read_rows(db_path, kind=None, patch=None):
+    """필요한 종류의 행만 읽는다. patch가 없으면 종류마다 최신 버전, 있으면 그 버전만.
+
+    예전에는 테이블 전체(수집한 모든 버전)를 읽고 파이썬에서 걸러, 자료를 업데이트할수록 질문마다 느려졌다.
+    patch를 Data Dragon 버전으로 추측해 바꾸지 않는다 (게임 패치 26.19 ≠ 자료 버전 16.19.1, 의도된 규칙).
+    """
     path = Path(db_path).resolve()
     if not path.exists():
         return []
     with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
         db.row_factory = sqlite3.Row
-        return [dict(row) for row in db.execute("SELECT * FROM records ORDER BY kind, name")]
+        versions = latest_versions(db, None if kind is None else {kind})
+        if patch is not None:
+            versions = {row_kind: patch for row_kind in versions}
+        rows = []
+        for row_kind, version in sorted(versions.items()):
+            rows += [dict(row) for row in db.execute(
+                "SELECT * FROM records WHERE kind=? AND version=? ORDER BY name", (row_kind, version))]
+        return rows
+
+
+CHAMPION_SITUATION = {'Fighter': '브루저', 'Tank': '탱커', 'Marksman': '원거리딜러', 'Mage': '마법사',
+                      'Assassin': '암살'}
+
+
+def situation_tags(kind, fields, text):
+    """검색이 쓰는 상황 태그를 공식 자료의 능력치·분류·설명에서만 만든다 (지어낸 게임 지식 아님).
+
+    예전에는 항상 빈 목록이라 '상대가 AP 위주인데 뭐 사요?'에 정글 펫 아이템이 나왔다 ('상대'라는 단어만 맞아서).
+    """
+    tags = []
+    if kind == 'item':
+        stats = fields.get('stats') or {}
+        if 'FlatSpellBlockMod' in stats:
+            tags.append('상대AP위주')
+        if 'FlatArmorMod' in stats:
+            tags.append('상대AD위주')
+        if '고통스러운 상처' in text or '치유 감소' in text or '회복 감소' in text:
+            tags.append('상대회복많음')
+        if 'FlatCritChanceMod' in stats:
+            tags.append('치명타빌드')
+    elif kind == 'champion':
+        tags = [CHAMPION_SITUATION[tag] for tag in fields.get('ddragon_tags') or [] if tag in CHAMPION_SITUATION]
+    return tags
 
 
 def as_document(row):
@@ -100,8 +168,18 @@ def as_document(row):
         elif kind == "champion":
             fields = {"ddragon_tags": entity.get("tags", []), "resource": entity.get("partype"),
                       "info": entity.get("info", {}), "stats": entity.get("stats", {})}
-            if fields['stats']:
-                lines.append('기본 능력치: ' + json.dumps(fields['stats'], ensure_ascii=False))
+            # 예전에는 기본 능력치 JSON(약 450자)을 그대로 넣었다. 모델이 읽기 어렵고 토큰만 썼다.
+            info = fields['info'] or {}
+            facts = []
+            if fields['ddragon_tags']:
+                facts.append('역할: ' + ', '.join(fields['ddragon_tags']))
+            if fields['resource']:
+                facts.append('자원: ' + fields['resource'])
+            if info:
+                facts.append('소개 지표(0~10): 공격 %s, 방어 %s, 마법 %s, 난이도 %s' % tuple(
+                    info.get(k, '?') for k in ('attack', 'defense', 'magic', 'difficulty')))
+            if facts:
+                lines.append(' · '.join(facts))
         elif kind == "rune":
             fields = {"key": entity.get('key'), "short_description": plain(entity.get('shortDesc')),
                       "tree_id": entity.get('tree_id'), "tree_key": entity.get('tree_key'),
@@ -114,24 +192,14 @@ def as_document(row):
             "data_type": kind, "patch_version": version,
             "collected_at": row.get('collected_at'), "sample_match_count": row.get('sample_match_count'),
             "source": row.get('source', 'Riot Games'),
-            "fields": fields, "situation_tags": []}
+            "fields": fields, "situation_tags": situation_tags(kind, fields, "\n".join(lines))}
 
 
 def get_documents(patch=None, kind=None, *, db_path="data/riftflow.db", item_map="11"):
     """item_map: 아이템을 어느 맵 상점 기준으로 거를지 (11 협곡, 12 칼바람, 30 아레나)."""
     if kind is not None and kind not in KINDS:
         raise ValueError("지원하지 않는 자료 종류입니다.")
-    rows = read_rows(db_path)
-    selected = [row for row in rows if kind is None or row["kind"] == kind]
-    if patch is not None:
-        selected = [row for row in selected if row["version"] == patch]
-    else:
-        latest = {}
-        for row in selected:
-            key = row["kind"]
-            if key not in latest or version_key(row["version"]) > version_key(latest[key]):
-                latest[key] = row["version"]
-        selected = [row for row in selected if row["version"] == latest[row["kind"]]]
+    selected = read_rows(db_path, kind, patch)
     result = []
     for row in selected:
         if row["kind"] == "item":

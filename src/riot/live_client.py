@@ -27,7 +27,6 @@ contracts.riot에 없는 값들(스코어보드 등)까지 LiveState에 넣기 �
 - 승패: eventdata의 GameEnd 이벤트의 Result("Win"/"Lose")를 사용한다.
 """
 
-import functools
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
@@ -47,10 +46,21 @@ _DDRAGON_VERSIONS_URL = "https://ddragon.leagueoflegends.com/api/versions.json"
 _DDRAGON_ITEM_URL_TEMPLATE = "https://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/item.json"
 
 
-def get_live_state() -> LiveState:
+# 마지막으로 받은 /gamestats와 받은 시각. 같은 폴링 주기 안에서 get_game_info가 같은 요청을 다시 보내지 않게 한다.
+_last_gamestats: Optional[dict] = None
+_last_gamestats_at = 0.0
+_GAMESTATS_REUSE = 1.5
+
+
+def get_live_state(timeout: float = 1.0) -> LiveState:
+    """게임 진행 여부. timeout은 연결을 기다리는 시간이다.
+
+    윈도우는 닫힌 로컬 포트에 연결하면 거절까지 2초쯤 걸려서, 게임 밖에서 부를 때는 짧게 준다.
+    """
+    global _last_gamestats, _last_gamestats_at
     try:
         response = requests.get(
-            f"{_LIVE_CLIENT_BASE}/gamestats", timeout=1.0, verify=False
+            f"{_LIVE_CLIENT_BASE}/gamestats", timeout=timeout, verify=False
         )
     except requests.exceptions.RequestException:
         # 클라이언트가 꺼져있거나 게임 중이 아님 - 정상적인 상태로 취급
@@ -65,7 +75,13 @@ def get_live_state() -> LiveState:
             connection=ConnectionState.CONNECTED,
         )
 
-    data = response.json()
+    try:
+        data = response.json()
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        return LiveState(status=LiveMatchStatus.NOT_IN_GAME, connection=ConnectionState.CONNECTED)
+    _last_gamestats, _last_gamestats_at = data, time.monotonic()
     return LiveState(
         status=LiveMatchStatus.IN_GAME,
         connection=ConnectionState.CONNECTED,
@@ -93,7 +109,10 @@ def _get(endpoint: str) -> Optional[Any]:
 
     if response.status_code != 200:
         return None
-    return response.json()
+    try:
+        return response.json()
+    except ValueError:          # 로딩 중 빈 본문이나 깨진 JSON
+        return None
 
 
 def is_in_game() -> bool:
@@ -111,7 +130,8 @@ def get_game_info() -> Optional[dict]:
 
     아이템 추천이 모드(협곡·칼바람·아레나)에 맞는 상점 아이템을 쓰는 데 필요하다.
     """
-    data = _get("/gamestats")
+    fresh = _last_gamestats is not None and time.monotonic() - _last_gamestats_at < _GAMESTATS_REUSE
+    data = _last_gamestats if fresh else _get("/gamestats")
     if not isinstance(data, dict):
         return None
     number = data.get("mapNumber")
@@ -226,8 +246,30 @@ def get_team_gold_totals(
     return TeamGoldTotals(order=order_total, chaos=chaos_total)
 
 
-@functools.lru_cache(maxsize=1)
+_prices_cache: Optional[Dict[int, int]] = None
+_prices_failed_at = 0.0
+_PRICES_RETRY = 300.0
+
+
 def _get_ddragon_item_prices() -> Dict[int, int]:
+    """성공한 가격표는 프로세스 동안 재사용하고, 실패는 5분 뒤 다시 시도한다.
+
+    예전에는 lru_cache가 실패(빈 표)까지 기억해서 한 번 오프라인으로 켜면 끝날 때까지 가격을 못 받았다.
+    """
+    global _prices_cache, _prices_failed_at
+    if _prices_cache is not None:
+        return _prices_cache
+    if time.monotonic() - _prices_failed_at < _PRICES_RETRY and _prices_failed_at:
+        return {}
+    prices = _download_ddragon_item_prices()
+    if prices:
+        _prices_cache = prices
+    else:
+        _prices_failed_at = time.monotonic()
+    return prices
+
+
+def _download_ddragon_item_prices() -> Dict[int, int]:
     """Data Dragon에서 최신 패치의 아이템 가격표(itemID -> 정식 총 가격)를
     가져와 캐싱한다.
 
