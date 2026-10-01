@@ -3,6 +3,7 @@
 앱이 보낸 임의의 프롬프트를 Gemini로 넘기는 경로는 만들지 않는다. 기능별로 정해진 요청만 받는다.
 """
 import json
+import threading
 
 from game_phases import payloads
 from game_phases.before_game.desktop import answer_before_game
@@ -16,8 +17,24 @@ GENERAL_KEYS = ('status', 'message', 'answer', 'generated', 'error')
 
 
 class AiService:
+    """기능별 AI 요청. 메서드는 (결과, 실제 모델 호출 수)를 돌려준다.
+
+    호출 수는 generate를 감싸 직접 센다. 예전에는 '자료 없음'처럼 모델을 부르지 않은 경우도 1회로 셌다.
+    """
+
     def __init__(self, db, knowledge_path, generate):
-        self.db, self.knowledge_path, self.generate = db, knowledge_path, generate
+        self.db, self.knowledge_path = db, knowledge_path
+        self._generate = generate
+        self._calls = threading.local()
+
+    def generate(self, prompt, **options):
+        self._calls.count = getattr(self._calls, 'count', 0) + 1
+        return self._generate(prompt, **options)
+
+    def counted(self, function, body):
+        self._calls.count = 0
+        result, _ = function(body)
+        return result, self._calls.count
 
     def runes(self, body):
         """(결과, Gemini 호출 수). 채팅 요청이 없는 자동 추천은 사용자끼리 공유하는 캐시를 쓴다.

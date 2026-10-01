@@ -33,6 +33,11 @@ def _entries(items, keys, limit=5, extra=None):
     return result
 
 
+def _list(value, limit):
+    """목록이면 앞의 limit개, 아니면 빈 목록. 앱이 아닌 요청이 숫자나 객체를 보내도 500이 나지 않게 한다."""
+    return value[:limit] if isinstance(value, list) else []
+
+
 def pick_view(view):
     """픽창 요약. 소환사 이름과 PUUID는 원래 들어 있지 않고, 챔피언·포지션·확정 여부만 남긴다."""
     view = view if isinstance(view, dict) else {}
@@ -41,13 +46,13 @@ def pick_view(view):
             'mine': mine[0] if mine else None,
             'allies': _entries(view.get('allies'), PICK_ENTRY_KEYS),
             'enemies': _entries(view.get('enemies'), PICK_ENTRY_KEYS),
-            'ally_bans': [text(b) for b in (view.get('ally_bans') or [])[:10]],
-            'enemy_bans': [text(b) for b in (view.get('enemy_bans') or [])[:10]]}
+            'ally_bans': [text(b) for b in _list(view.get('ally_bans'), 10)],
+            'enemy_bans': [text(b) for b in _list(view.get('enemy_bans'), 10)]}
 
 
 def _items(entry):
     items = []
-    for item in (entry.get('items') or [])[:7]:
+    for item in _list(entry.get('items'), 7):
         if isinstance(item, dict) and isinstance(item.get('id'), int):
             items.append({'id': item['id'], 'slot': _number(item.get('slot')), 'name': text(item.get('name'))})
     return {'items': items}
@@ -81,7 +86,8 @@ def history(messages):
 
 
 def user_requests(messages):
-    return [text(m, MESSAGE_LIMIT) for m in (messages or [])[-5:] if isinstance(m, str) and m.strip()]
+    return [text(m, MESSAGE_LIMIT) for m in (messages[-5:] if isinstance(messages, list) else [])
+            if isinstance(m, str) and m.strip()]
 
 
 def _page(page):
@@ -89,14 +95,14 @@ def _page(page):
     for style in (page or [])[:2] if isinstance(page, list) else []:
         if isinstance(style, dict) and isinstance(style.get('style'), int):
             styles.append({'style': style['style'],
-                           'perks': [p for p in (style.get('perks') or [])[:6] if isinstance(p, int)]})
+                           'perks': [p for p in _list(style.get('perks'), 6) if isinstance(p, int)]})
     return styles
 
 
 def recent_pages(pages):
     """이 챔피언으로 최근 쓴 룬 페이지와 승패 (최대 5개)."""
     return [{'won': bool(p.get('won')), 'opponent': text(p.get('opponent')), 'page': _page(p.get('page'))}
-            for p in (pages or [])[:5] if isinstance(p, dict)]
+            for p in _list(pages, 5) if isinstance(p, dict)]
 
 
 def observations(record):
@@ -116,7 +122,7 @@ def general_context(context):
         return None
     rank = context.get('rank') if isinstance(context.get('rank'), dict) else None
     matches = []
-    for match in (context.get('recent_matches') or [])[:20]:
+    for match in _list(context.get('recent_matches'), 20):
         if isinstance(match, dict):
             matches.append({key: (match.get(key) if isinstance(match.get(key), (bool, int, float)) else text(match.get(key)))
                             for key in ('played_at_epoch', 'game_duration_seconds', 'game_mode', 'champion_name',

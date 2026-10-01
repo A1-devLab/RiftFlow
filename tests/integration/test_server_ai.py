@@ -126,7 +126,51 @@ class ServerAiTests(unittest.TestCase):
         self.assertEqual(blocked.json()['error']['code'], 'daily_ai_limit')
         from server.db import Database
         db = Database(self.settings.db_path)
-        self.assertEqual(db.one("SELECT riot_requests FROM usage_daily")["riot_requests"], 0)
+        self.assertIsNone(db.one("SELECT riot_requests FROM usage_daily WHERE riot_requests > 0"))
+        self.assertEqual(db.one("SELECT requests FROM ai_usage WHERE scope LIKE 'device:%'")["requests"], 5)
+
+    def test_concurrent_requests_cannot_exceed_the_daily_limit(self):
+        """예전에는 확인과 증가가 따로라 동시에 10번 보내면 한도 5에서도 10번 다 통과했다."""
+        import threading
+        import time as clock
+        from fastapi.testclient import TestClient
+        self.generate.side_effect = lambda prompt, **options: (clock.sleep(0.05), {'text': '답'})[1]
+        codes, threads = [], []
+        for _ in range(10):
+            client = TestClient(self.app)
+            threads.append(threading.Thread(target=lambda c=client: codes.append(
+                c.post('/v1/coach/general', json={'question': '질문'}, headers=self.auth).status_code)))
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertLessEqual(codes.count(200), 5)
+        self.assertLessEqual(self.generate.call_count, 5)
+
+    def test_no_model_call_is_not_charged(self):
+        """모델을 부르지 않은 답(게임 중이 아님 등)은 한도에서 빼 준다."""
+        for _ in range(7):
+            self.assertEqual(self.post('/v1/coach/in-game', {'question': '어때?', 'view': {}}).status_code, 200)
+        self.generate.assert_not_called()
+        self.assertEqual(self.post('/v1/coach/general', {'question': '질문'}).status_code, 200)
+
+    def test_malformed_nested_fields_are_400_free_and_riot_errors_are_502(self):
+        bad = self.post('/v1/coach/pick', {'question': 'q', 'champion': '아리', 'view': {'ally_bans': 5, 'enemy_bans': {}}})
+        self.assertEqual(bad.status_code, 200)
+        bad = self.post('/v1/coach/general', {'question': 'q', 'context': {'recent_matches': {}}})
+        self.assertEqual(bad.status_code, 200)
+        from contracts.riot import RiotApiError
+        from fastapi.testclient import TestClient
+        from server.app import create_app
+        gateway = Mock()
+        gateway.get.side_effect = RiotApiError('API 키가 없거나 유효하지 않습니다.')
+        app = create_app(self.settings, gateway=gateway, generate=self.generate)
+        http = TestClient(app)
+        auth = {'Authorization': 'Bearer ' + http.post('/v1/devices').json()['token']}
+        response = http.get('/v1/riot/rank/' + 'a' * 78, headers=auth)
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()['error']['code'], 'riot_unavailable')
+        self.assertNotIn('키', response.json()['error']['message'])          # 서버 설정 정보는 사용자에게 보내지 않음
 
     def test_validation_and_disabled_ai(self):
         self.assertEqual(self.post('/v1/coach/general', {'question': ''}).status_code, 422)

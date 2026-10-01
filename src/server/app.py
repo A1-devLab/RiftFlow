@@ -12,9 +12,12 @@ from datetime import datetime, timedelta, timezone
 
 from typing import List, Optional
 
+import requests
 from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+
+from contracts.riot import RiotApiError
 
 from .ai import AiService
 from .config import Settings
@@ -89,17 +92,35 @@ def gemini_generator(settings):
 
     HASA는 동시 1건 한도라 429에 짧게 기다렸다 한 번 더 보낸다. Gemini 키도 있으면 HASA가 실패할 때 Gemini로 넘긴다.
     """
-    from rag.gemini import generate
+    from rag.gemini import GeminiError, generate
     from rag.llm import with_fallback
+
+    def public(call):
+        """키·설정 안내('HASA_API_KEY를 확인하세요')나 공급자 응답 본문을 앱 사용자에게 보내지 않는다."""
+        if call is None:
+            return None
+
+        def wrapped(prompt, **options):
+            try:
+                return call(prompt, **options)
+            except GeminiError as error:
+                if error.status == 429 or error.kind in ('quota', 'daily_quota', 'minute_quota', 'busy'):
+                    message = 'AI 사용량이 많아 지금은 답하지 못했습니다. 잠시 뒤 다시 시도해 주세요.'
+                elif error.kind == 'timeout' or (error.status or 0) >= 500:
+                    message = 'AI 응답이 늦어 답하지 못했습니다. 잠시 뒤 다시 시도해 주세요.'
+                else:
+                    message = 'AI 서버 설정 문제로 답하지 못했습니다. 관리자에게 알려 주세요.'
+                raise GeminiError(message, status=error.status, retry_after=error.retry_after, kind=error.kind) from error
+        return wrapped
     call_gemini = (lambda prompt, **options: generate(prompt, model=settings.gemini_model, key=settings.gemini_api_key,
                                                       retries=0, **options)) if settings.gemini_api_key else None
     if settings.llm_provider == "hasa" and settings.hasa_api_key:
         from rag.openai_compat import generate as call_hasa
         hasa = lambda prompt, **options: call_hasa(prompt, model=settings.hasa_model, key=settings.hasa_api_key,
                                                    retries=1, **options)
-        return with_fallback(hasa, call_gemini)
-    return call_gemini or (lambda prompt, **options: generate(prompt, model=settings.gemini_model,
-                                                              key=settings.gemini_api_key, retries=0, **options))
+        return public(with_fallback(hasa, call_gemini))
+    return public(call_gemini or (lambda prompt, **options: generate(prompt, model=settings.gemini_model,
+                                                                     key=settings.gemini_api_key, retries=0, **options)))
 
 
 def create_app(settings=None, gateway=None, clock=time.time, generate=None):
@@ -110,6 +131,10 @@ def create_app(settings=None, gateway=None, clock=time.time, generate=None):
     ai = AiService(db, settings.knowledge_db_path, generate or gemini_generator(settings))
     registrations = defaultdict(deque)
     registrations_lock = threading.Lock()
+    # 동시에 처리할 AI 요청 수. 넘으면 기다리지 않고 바로 '잠시 뒤 다시'로 돌려준다.
+    # 예전에는 느린 AI 요청이 서버 스레드(40개)를 다 붙잡아 상태 확인·전적 조회까지 멈출 수 있었다.
+    ai_slots = threading.BoundedSemaphore(max(1, settings.ai_concurrency))
+    cleaned = {"day": None}
 
     app = FastAPI(title="RiftFlow API", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -119,7 +144,20 @@ def create_app(settings=None, gateway=None, clock=time.time, generate=None):
         return JSONResponse({"error": {"code": error.code, "message": error.message}},
                             status_code=error.status, headers=headers)
 
+    def daily_cleanup():
+        """하루 한 번 오래된 캐시·사용량을 지운다 (별도 스레드 없이 그날 첫 요청에서)."""
+        day = kst_day()
+        if cleaned["day"] == day:
+            return
+        cleaned["day"] = day
+        cutoff = datetime.fromtimestamp(clock() - 14 * 86400, KST).strftime("%Y-%m-%d")
+        try:
+            db.cleanup(clock(), cutoff)
+        except Exception:                       # noqa: BLE001 - 정리 실패로 요청을 막지 않는다
+            cleaned["day"] = None
+
     def device(authorization: str = Header(default=""), app_version: str = Header(default="", alias="X-RiftFlow-Version")):
+        daily_cleanup()
         token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
         device_id = db.find_device(token_hash(token)) if token else None
         if device_id is None:
@@ -139,34 +177,49 @@ def create_app(settings=None, gateway=None, clock=time.time, generate=None):
     def kst_day():
         return datetime.fromtimestamp(clock(), KST).strftime("%Y-%m-%d")
 
-    def ai_device(device_id=Depends(device)):
+    def ai_device(request: Request, device_id=Depends(device)):
+        """AI 한도를 기기·IP·서버 전체 세 범위로 한 번에 예약한다. 넘으면 아무것도 쓰지 않고 거절한다."""
         if not ai_enabled:
-            raise ApiError(503, "ai_unavailable", "지금은 AI 기능을 쓸 수 없습니다. 서버 관리자에게 알려 주세요.")
-        if db.ai_requests(device_id, kst_day()) >= settings.device_daily_ai:
-            raise ApiError(429, "daily_ai_limit", "오늘 AI 사용 한도를 모두 썼습니다. 내일 다시 이용해 주세요.",
-                           retry_after=seconds_until_kst_midnight(clock()))
-        return device_id
+            raise ApiError(503, "ai_unavailable", "지금은 AI 기능을 쓸 수 없습니다. 잠시 뒤 다시 시도해 주세요.")
+        scopes = [("device:%d" % device_id, settings.device_daily_ai), ("ip:" + client_ip(request), settings.ip_daily_ai),
+                  ("global", settings.global_daily_ai)]
+        day = kst_day()
+        full = db.reserve_ai(scopes, day)
+        if full is not None:
+            message = ("오늘 서버 전체 AI 사용량이 한도에 도달했습니다. 내일 다시 이용해 주세요." if full == "global"
+                       else "오늘 AI 사용 한도를 모두 썼습니다. 내일 다시 이용해 주세요.")
+            raise ApiError(429, "daily_ai_limit", message, retry_after=seconds_until_kst_midnight(clock()))
+        return {"device": device_id, "scopes": [scope for scope, _ in scopes], "day": day}
 
-    def ai_call(function, body, device_id):
-        result, used = function(body.model_dump())
-        db.count_ai(device_id, kst_day(), used)
+    def ai_call(function, body, reservation):
+        if not ai_slots.acquire(blocking=False):
+            db.adjust_ai(reservation["scopes"], reservation["day"], -1)
+            raise ApiError(503, "ai_busy", "AI 요청이 몰려 있습니다. 잠시 뒤 다시 시도해 주세요.", retry_after=5)
+        try:
+            result, used = ai.counted(function, body.model_dump())
+        except Exception:
+            db.adjust_ai(reservation["scopes"], reservation["day"], -1)
+            raise
+        finally:
+            ai_slots.release()
+        db.adjust_ai(reservation["scopes"], reservation["day"], used - 1)
         return result
 
     @app.post("/v1/runes/recommend")
-    def runes(body: RuneBody, device_id=Depends(ai_device)):
-        return ai_call(ai.runes, body, device_id)
+    def runes(body: RuneBody, reservation=Depends(ai_device)):
+        return ai_call(ai.runes, body, reservation)
 
     @app.post("/v1/coach/pick")
-    def coach_pick(body: PickBody, device_id=Depends(ai_device)):
-        return ai_call(ai.pick, body, device_id)
+    def coach_pick(body: PickBody, reservation=Depends(ai_device)):
+        return ai_call(ai.pick, body, reservation)
 
     @app.post("/v1/coach/in-game")
-    def coach_in_game(body: InGameBody, device_id=Depends(ai_device)):
-        return ai_call(ai.in_game, body, device_id)
+    def coach_in_game(body: InGameBody, reservation=Depends(ai_device)):
+        return ai_call(ai.in_game, body, reservation)
 
     @app.post("/v1/coach/general")
-    def coach_general(body: GeneralBody, device_id=Depends(ai_device)):
-        return ai_call(ai.general, body, device_id)
+    def coach_general(body: GeneralBody, reservation=Depends(ai_device)):
+        return ai_call(ai.general, body, reservation)
 
     def riot_call(function, *args):
         try:
@@ -177,15 +230,22 @@ def create_app(settings=None, gateway=None, clock=time.time, generate=None):
         except RiotBusy as busy:
             raise ApiError(503, "riot_busy", "요청이 몰려 잠시 기다려야 합니다. 조금 뒤 다시 시도해 주세요.",
                            retry_after=busy.retry_after)
+        except (RiotApiError, requests.exceptions.RequestException):
+            # 키 만료(401/403)·라이엇 장애(5xx)·연결 실패. 예전에는 그대로 500 Internal Server Error였다.
+            raise ApiError(502, "riot_unavailable", "라이엇 서버에서 정보를 받지 못했습니다. 잠시 뒤 다시 시도해 주세요.",
+                           retry_after=30)
 
     @app.get("/v1/health")
-    def health():
+    async def health():
+        # async라 스레드 풀이 바빠도 바로 답한다.
         return {"status": "ok"}
 
     @app.post("/v1/devices")
     def register(request: Request, app_version: str = Header(default="", alias="X-RiftFlow-Version")):
         ip, now = client_ip(request), clock()
         with registrations_lock:
+            for old_ip in [key for key, times in registrations.items() if not times or times[-1] < now - 3600]:
+                del registrations[old_ip]           # 한 번 등록한 IP가 메모리에 영원히 남지 않게
             recent = registrations[ip]
             while recent and recent[0] < now - 3600:
                 recent.popleft()

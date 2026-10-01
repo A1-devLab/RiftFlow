@@ -33,7 +33,6 @@ from .lcu_client import (
     get_current_summoner,
     get_gameflow_phase,
     get_post_game_summary,
-    get_rune_pages,
     is_client_logged_in,
     start_champ_select_watcher,
     start_login_watcher,
@@ -82,7 +81,6 @@ __all__ = [
     "get_champ_select_session",
     "start_champ_select_watcher",
     "ChampSelectSocket",
-    "get_rune_pages",
     "apply_rune_page",
     "RIFTFLOW_PAGE_PREFIX",
     # 데이터 형식

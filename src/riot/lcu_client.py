@@ -491,15 +491,6 @@ RIFTFLOW_PAGE_PREFIX = "RiftFlow"
 _PAGE_NAME_LIMIT = 25   # 클라이언트 룬 페이지 이름 칸보다 길면 잘릴 수 있어 여유 있게 자른다
 
 
-def get_rune_pages() -> Optional[List[dict]]:
-    """클라이언트의 룬 페이지 목록(원본). 클라이언트가 꺼져 있으면 None."""
-    credentials = _find_lcu_credentials()
-    if credentials is None:
-        return None
-    pages = _lcu_get(*credentials, "/lol-perks/v1/pages")
-    return pages if isinstance(pages, list) else None
-
-
 def _lcu_error(status: Optional[int], data: Any, action: str) -> RiotApiError:
     if status is None:
         return RiotApiError(f"롤 클라이언트와 통신하지 못해 {action}하지 못했습니다.")

@@ -2,6 +2,7 @@
 import io
 import json
 import os
+import time
 import unittest
 import urllib.error
 from unittest.mock import patch
@@ -30,6 +31,29 @@ def http_error(code, body='', headers=None):
 
 
 class OpenAICompatTests(unittest.TestCase):
+    def setUp(self):
+        openai_compat._blocked.clear()
+        openai_compat._sent.clear()
+        self.addCleanup(openai_compat._blocked.clear)
+        self.addCleanup(openai_compat._sent.clear)
+
+    def test_quota_and_timeouts_skip_hasa_for_a_while_and_rpm_is_respected(self):
+        calls = []
+
+        def busy(request, timeout):
+            calls.append(1)
+            raise http_error(429, 'daily limit')
+        with self.assertRaises(GeminiError):
+            openai_compat.generate(PROMPT, model='m', key='k', opener=busy, retries=0)
+        with self.assertRaises(GeminiError) as caught:
+            openai_compat.generate(PROMPT, model='m', key='k', opener=busy, retries=0)
+        self.assertEqual(len(calls), 1)                 # 두 번째는 보내지 않고 바로 실패 → 서버는 Gemini로 넘김
+        openai_compat._blocked.clear()
+        openai_compat._sent[:] = [time.time()] * openai_compat.RPM_LIMIT
+        with self.assertRaises(GeminiError) as caught:
+            openai_compat.generate(PROMPT, model='m', key='k', opener=lambda r, timeout: reply('ok'))
+        self.assertEqual(caught.exception.kind, 'busy')  # 분당 한도를 넘기지 않는다
+
     def test_request_shape_auth_header_and_json_mode(self):
         sent = []
 
@@ -119,6 +143,7 @@ class OpenAICompatTests(unittest.TestCase):
             openai_compat.generate(PROMPT, key='k', opener=opener, sleep=waits.append, retries=1)
         self.assertEqual((len(calls), waits), (2, [4]))
         self.assertEqual(caught.exception.status, 429)
+        openai_compat._blocked.clear()                  # 429로 10분 건너뛰기가 걸린 것을 풀고 다음 경우를 본다
         with self.assertRaises(GeminiError) as caught:
             openai_compat.generate(PROMPT, key='k', opener=lambda r, timeout: (_ for _ in ()).throw(http_error(401)))
         self.assertIn('HASA_API_KEY', caught.exception.message)

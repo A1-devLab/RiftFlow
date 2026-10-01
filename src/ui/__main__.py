@@ -152,6 +152,7 @@ class Window(QMainWindow):
         # 화면 셋이 아이콘 목록·그림을 따로 받지 않도록 하나를 함께 쓴다 (예전에는 같은 파일을 세 번 받았다).
         self.assets, self.portraits = MatchAssets(self), ChampionPortraits(self)
         self.poll_failures = self.live_misses = 0
+        self.matchup_key = None
         self.personal_path = self.data_dir / "personal_matches.db"
         # AI 대화 기록은 이 PC에만 저장한다. 일반 질문은 앱을 다시 켜도 마지막 대화를 이어 가고,
         # 픽창·인게임 대화는 픽창·게임마다 새로 시작한다.
@@ -437,7 +438,8 @@ class Window(QMainWindow):
             return
         self.request_runes(request)
 
-    def update_personal_matchup(self):
+    def update_personal_matchup(self, force=False):
+        """개인 상성 문구. 픽창 폴링(2.5초)마다 개인 기록 DB를 다시 읽지 않도록 조건이 바뀔 때만 계산한다."""
         if not self.riot_context:
             return
         view = self.before_game.view
@@ -447,6 +449,10 @@ class Window(QMainWindow):
         from game_phases.before_game.desktop import opponent_for_lane
         opponent = self.before_game.opponent.text().strip() or opponent_for_lane(view)
         lane = (view.get('mine') or {}).get('position')
+        key = (self.riot_context['player'].puuid, champion, opponent, lane)
+        if key == self.matchup_key and not force:
+            return
+        self.matchup_key = key
         summary = personal_context(self.personal_path, self.riot_context['player'].puuid,
                                    canonical_champion(self.db_path, champion),
                                    canonical_champion(self.db_path, opponent), lane)
@@ -665,6 +671,8 @@ class Window(QMainWindow):
         self.connection.setText('AI: %s  ·  전적: %s' % (ai, riot))
 
     def start_job(self, function, callback, on_error=None):
+        if self.closing:
+            return              # 닫는 중에는 새 작업(대기 중이던 룬 적용·전적 새로고침)을 시작하지 않는다
         job = Job(function, self)
         self.jobs.append(job)
         self.send.setEnabled(False)
@@ -763,7 +771,7 @@ class Window(QMainWindow):
         self.out_game.show_profile(payload)
         self.match_cache.update({d.get('metadata', {}).get('matchId'): d
                                  for d in payload.get('details', []) if d.get('metadata', {}).get('matchId')})
-        self.update_personal_matchup()
+        self.update_personal_matchup(force=True)        # 새 전적이 저장됐으니 같은 조건이라도 다시 계산
         self.status.setText('로그인한 플레이어와 최근 전적을 불러왔습니다.')
 
     def load_match_detail(self, match_id):
@@ -883,7 +891,13 @@ class Window(QMainWindow):
 
     def closeEvent(self, event):
         if self.jobs:
-            self.status.setText('진행 중인 작업이 끝난 뒤 종료할 수 있습니다.')
+            # 예전에는 작업(느린 AI 답변, 자료 업데이트)이 끝날 때까지 창을 닫을 수 없었다.
+            # 창은 바로 숨기고, 실행 중인 스레드가 끝나면 그때 실제로 닫는다 (실행 중인 QThread를 지우면 앱이 죽는다).
+            self.closing = True
+            self.champ_timer.stop()
+            self.hide()
+            for job in self.jobs:
+                job.finished.connect(self.close, Qt.QueuedConnection)
             event.ignore()
             return
         # 폴링 스레드가 끝난 뒤 다시 닫는다. 실행 중인 QThread를 지우면 앱이 비정상 종료된다.
