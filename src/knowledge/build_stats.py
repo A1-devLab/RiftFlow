@@ -46,6 +46,8 @@ def connect(path):
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path, timeout=30)
     db.executescript(SCHEMA)
+    if 'perks' not in {row[1] for row in db.execute('PRAGMA table_info(build_samples)')}:
+        db.execute('ALTER TABLE build_samples ADD COLUMN perks TEXT')    # 룬 통계용 (1.0.3부터)
     return db
 
 
@@ -69,14 +71,20 @@ def samples_from_match(detail):
         if not champion:
             continue
         items = [player.get('item%d' % slot) for slot in range(6)]
-        styles = (player.get('perks') or {}).get('styles') or []
+        perks = player.get('perks') or {}
+        styles = perks.get('styles') or []
         primary = styles[0] if styles else {}
         selections = primary.get('selections') or []
+        secondary = styles[1] if len(styles) > 1 else {}
+        shards = perks.get('statPerks') or {}
         samples.append({
             'champion': champion, 'position': (player.get('teamPosition') or '').upper() or None,
             'items': [int(i) for i in items if isinstance(i, int) and i > 0],
             'keystone': selections[0].get('perk') if selections else None,
-            'primary_style': primary.get('style'), 'sub_style': styles[1].get('style') if len(styles) > 1 else None,
+            'primary_style': primary.get('style'), 'sub_style': secondary.get('style'),
+            'perks': {'primary': [s.get('perk') for s in selections[1:4]],
+                      'secondary': [s.get('perk') for s in (secondary.get('selections') or [])[:2]],
+                      'shards': [shards.get(k) for k in ('offense', 'flex', 'defense')]},
             'win': bool(player.get('win'))})
     return samples, patch
 
@@ -87,9 +95,11 @@ def save_match(db, match_id, detail, now=None):
         patch = 'skip'                          # 다시 받지 않도록 기록만 남긴다
     db.execute('INSERT OR IGNORE INTO build_matches VALUES (?, ?, ?)', (match_id, patch, now or time.time()))
     for sample in samples:
-        db.execute('INSERT OR REPLACE INTO build_samples VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        db.execute('INSERT OR REPLACE INTO build_samples (match_id, patch, champion, position, items, keystone, '
+                   'primary_style, sub_style, win, perks) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                    (match_id, patch, sample['champion'], sample['position'], json.dumps(sample['items']),
-                    sample['keystone'], sample['primary_style'], sample['sub_style'], int(sample['win'])))
+                    sample['keystone'], sample['primary_style'], sample['sub_style'], int(sample['win']),
+                    json.dumps(sample.get('perks'))))
     return len(samples)
 
 
@@ -164,7 +174,8 @@ def collect(db, gateway, *, players=300, matches=900, days=7, log=print, clock=t
 
 
 def item_popularity(db_path, champion, position=None):
-    """{'games': 표본 수, 'patch': 패치들, 'items': {아이템 ID: 완성 비율}, 'keystones': {룬 ID: 비율}}.
+    """{'games', 'patch', 'items': {아이템: 완성 비율}, 'keystones': {룬: 비율}, 'runes': {일반 룬: 비율},
+    'secondary_styles': {보조 트리: 비율}, 'rune_games': 룬 전체 정보가 있는 표본 수}.
 
     최근 패치 2개를 합쳐 센다. 포지션을 주면 그 포지션 표본만 (표본이 MIN_GAMES보다 적으면 포지션 구분 없이).
     """
@@ -173,14 +184,17 @@ def item_popularity(db_path, champion, position=None):
 
 
 def _popularity(db_path, champion, position):
-    empty = {'games': 0, 'patch': [], 'items': {}, 'keystones': {}}
+    empty = {'games': 0, 'patch': [], 'items': {}, 'keystones': {}, 'runes': {}, 'secondary_styles': {}, 'rune_games': 0}
     if not champion or not Path(db_path).exists():
         return empty
     try:
         with closing(sqlite3.connect(str(db_path))) as db:
             if not db.execute("SELECT name FROM sqlite_master WHERE name='build_samples'").fetchone():
                 return empty
-            patches = sorted({r[0] for r in db.execute('SELECT DISTINCT patch FROM build_samples WHERE champion=?',
+            has_perks = 'perks' in {row[1] for row in db.execute('PRAGMA table_info(build_samples)')}
+            columns = 'items, keystone, sub_style' + (', perks' if has_perks else ', NULL')
+            # 경기 기록의 챔피언 이름과 Data Dragon ID는 대소문자가 다를 수 있다 (FiddleSticks / Fiddlesticks).
+            patches = sorted({r[0] for r in db.execute('SELECT DISTINCT patch FROM build_samples WHERE lower(champion)=lower(?)',
                                                        (champion,))},
                              key=lambda p: tuple(int(n) for n in p.split('.')), reverse=True)[:2]
             if not patches:
@@ -188,20 +202,28 @@ def _popularity(db_path, champion, position):
             marks = ','.join('?' * len(patches))
             rows = []
             if position:
-                rows = db.execute('SELECT items, keystone FROM build_samples WHERE champion=? AND position=? AND patch IN (%s)'
-                                  % marks, (champion, position, *patches)).fetchall()
+                rows = db.execute('SELECT %s FROM build_samples WHERE lower(champion)=lower(?) AND position=? '
+                                  'AND patch IN (%s)' % (columns, marks), (champion, position, *patches)).fetchall()
             if len(rows) < MIN_GAMES:
-                rows = db.execute('SELECT items, keystone FROM build_samples WHERE champion=? AND patch IN (%s)' % marks,
-                                  (champion, *patches)).fetchall()
+                rows = db.execute('SELECT %s FROM build_samples WHERE lower(champion)=lower(?) AND patch IN (%s)'
+                                  % (columns, marks), (champion, *patches)).fetchall()
     except sqlite3.Error:
         return empty
-    items, keystones = {}, {}
-    for raw, keystone in rows:
+    items, keystones, runes, secondary, rune_games = {}, {}, {}, {}, 0
+    for raw, keystone, sub_style, perks in rows:
         for item_id in set(json.loads(raw)):
             items[item_id] = items.get(item_id, 0) + 1
         if keystone:
             keystones[keystone] = keystones.get(keystone, 0) + 1
+        if sub_style:
+            secondary[sub_style] = secondary.get(sub_style, 0) + 1
+        page = json.loads(perks) if perks else None
+        if page:
+            rune_games += 1
+            for rune in set((page.get('primary') or []) + (page.get('secondary') or [])):
+                if rune:
+                    runes[rune] = runes.get(rune, 0) + 1
     games = len(rows)
-    return {'games': games, 'patch': patches,
-            'items': {item_id: round(count / games, 3) for item_id, count in items.items()} if games else {},
-            'keystones': {rune: round(count / games, 3) for rune, count in keystones.items()} if games else {}}
+    rate = lambda counts, total: {key: round(count / total, 3) for key, count in counts.items()} if total else {}
+    return {'games': games, 'patch': patches, 'items': rate(items, games), 'keystones': rate(keystones, games),
+            'secondary_styles': rate(secondary, games), 'runes': rate(runes, rune_games), 'rune_games': rune_games}

@@ -33,10 +33,12 @@ rune_catalog의 트리마다 keystones(핵심 룬)와 row1, row2, row3(일반 �
 - user_requests는 사용자가 이번 픽창 채팅에서 한 말이다. 룬이나 플레이 성향에 대한 요청(예: 공격적으로, 안정적으로, 로밍 위주로)이 있으면 가장 먼저 반영한다. 룬과 관계없는 말은 무시한다. 요청이 여러 개면 나중에 한 말을 따른다.
 - 상대 조합은 Data Dragon 역할 태그와 소개 지표일 뿐 실제 딜 비율이 아니다.
 - my_recent_pages는 이 계정이 이 챔피언으로 실제 쓴 페이지와 그 판의 승패다. 참고만 한다. 몇 판의 승패로 좋고 나쁨을 판단하지 않는다.
+- high_elo_stats는 상위 랭커(챌린저·그랜드마스터 솔로 랭크)가 이 챔피언으로 고른 핵심 룬·보조 트리·룬의 비율(rate, 0~1)과 표본 수(games)다. 이것은 근거이지 정답이 아니다. 많이 쓰는 룬을 기본으로 삼되, 이번 판의 맞라인 상대·상대 조합·user_requests에 맞게 바꿀 수 있다. 통계에서 많이 쓰는 핵심 룬과 다르게 고르면 summary에 그 이유를 밝힌다. high_elo_stats가 없으면 통계 없이 판단한다.
+- 이유에 통계를 쓸 때는 '상위 랭커가 많이 쓰는'처럼 말하고, 승률이라고 말하지 않는다 (승률은 입력에 없다).
 - 맞라인 상대가 없으면 내 챔피언과 상대 조합만으로 고른다.
 - game_mode가 ARAM(칼바람 나락)이면 라인과 맞라인 상대가 없고 처음부터 다섯 명이 한 길에서 싸운다. 죽기 전에는 귀환해 상점을 쓸 수 없다. 사용자가 라인전을 말하면 교전 성향으로 해석하고, 한타·포킹·유지력을 기준으로 고른다. 라인 유지나 로밍을 이유로 쓰지 않는다.
 - game_mode가 협곡이 아닌 다른 모드면 그 모드에서도 말이 되는 이유만 쓴다. 모르는 모드의 규칙을 지어내지 않는다.
-- 승률, 픽률, '요즘 메타' 같은 통계는 입력에 없으므로 이유로 쓰지 않는다.
+- 승률이나 '요즘 메타' 같은 말은 입력에 없으므로 쓰지 않는다. 비율 근거는 high_elo_stats에 있는 것만 쓴다.
 - previous_errors가 있으면 직전 선택이 규칙을 어긴 것이다. 그 부분을 고쳐 다시 고른다.
 
 reasons 작성.
@@ -121,11 +123,35 @@ def build_payload(db_path, personal_db_path, puuid, view, trees, *, champion, op
         'user_requests': list(user_requests or [])[-5:],
         'my_recent_pages': [{'won': p['won'], 'opponent': p['opponent'], 'page': name_recent_page(p['page'], trees)}
                             for p in pages],
+        'high_elo_stats': rune_stats(db_path, canonical, mine.get('position'), view.get('game_mode'), trees),
         'page_rules': PAGE_RULES,
         'rune_catalog': catalog_for_prompt(trees),
         'shard_rows': [{'row': name, 'options': [{'id': shard, 'name': label} for shard, label in options]}
                        for name, options in SHARD_ROWS],
     }
+
+
+def rune_stats(db_path, champion, position, game_mode, trees):
+    """상위 랭커(챌린저·그랜드마스터 솔로 랭크)가 이 챔피언으로 쓴 룬 통계. 표본이 적거나 협곡이 아니면 None.
+
+    근거일 뿐 정답이 아니다. 프롬프트는 이번 판(상대, 사용자 요청)에 맞춰 고르고, 통계와 다르면 이유를 밝히게 한다.
+    """
+    from knowledge.build_stats import MIN_GAMES, item_popularity
+    if game_mode not in (None, 'CLASSIC'):
+        return None                         # 통계는 협곡 솔로 랭크 기준이라 칼바람 등에는 쓰지 않는다
+    lane = {'top': 'TOP', 'jungle': 'JUNGLE', 'middle': 'MIDDLE', 'bottom': 'BOTTOM', 'utility': 'UTILITY'}
+    stats = item_popularity(db_path, champion, lane.get(str(position or '').lower()))
+    if stats['games'] < MIN_GAMES:
+        return None
+    names = {rune['id']: rune['name'] for tree in trees.values() for runes in tree['slots'] for rune in runes}
+    tree_names = {tree_id: tree['name'] for tree_id, tree in trees.items()}
+    top = lambda rates, labels, n: [{'name': labels[key], 'rate': value}
+                                    for key, value in sorted(rates.items(), key=lambda kv: -kv[1]) if key in labels][:n]
+    result = {'games': stats['games'], 'source': '챌린저·그랜드마스터 솔로 랭크, 최근 패치',
+              'keystones': top(stats['keystones'], names, 3), 'secondary_trees': top(stats['secondary_styles'], tree_names, 3)}
+    if stats['rune_games'] >= MIN_GAMES:
+        result['runes'] = top({k: v for k, v in stats['runes'].items() if v >= 0.1}, names, 10)
+    return result
 
 
 def recommend_runes(db_path, personal_db_path, puuid, view, *, generate, champion=None, opponent=None,
