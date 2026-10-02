@@ -478,8 +478,17 @@ class Window(QMainWindow):
             return
         model = self.model.text().strip() or llm.default_model()
         puuid = self.riot_context['player'].puuid if self.riot_context else None
-        self.before_game.answer.setPlainText('확정된 픽과 공식 자료를 확인하고 있습니다…')
         server, path, history = self.server(), self.db_path, self.chat_context('pick')
+        if request['champion'] in ('', '선택 전'):
+            # 챔피언을 고르기 전(또는 픽창 밖)에도 '티모 서폿이랑 어울리는 거?' 같은 질문에는 답한다.
+            # 예전에는 빈 챔피언을 서버가 형식 오류(422)로 거절해 '요청이 실패했습니다 (422)'만 보였다.
+            self.before_game.answer.setPlainText('공식 자료를 확인하고 있습니다…')
+            profile = self.riot_context
+            self.start_job(lambda: self.general_answer(path, request['question'], profile, model, history),
+                           lambda result: self.show_before_game_answer(result, request['question']),
+                           on_error=self.before_game.answer.setPlainText)
+            return
+        self.before_game.answer.setPlainText('확정된 픽과 공식 자료를 확인하고 있습니다…')
         if server is not None:
             # 개인 상성 기록은 이 PC에서 계산해 요약만 보낸다 (PUUID는 보내지 않음).
             from api_client.coach import coach_pick
@@ -584,9 +593,9 @@ class Window(QMainWindow):
         self.apply_runes(request)
 
     def show_before_game_answer(self, result, question=None):
-        self.record_chat('pick', question, result.get('answer') or result.get('message') or '답변을 받지 못했습니다.')
+        self.record_chat('pick', question, self.answer_text(result) or '답변을 받지 못했습니다.')
         self.show_transcript(self.before_game.answer, 'pick')
-        self.status.setText('픽창 답변 완료' if result['generated'] else '픽창 자료 확인 필요')
+        self.status.setText('픽창 답변 완료' if result.get('generated') else '픽창 자료 확인 필요')
 
     def make_chat(self):
         layout = self.page('AI에게 질문', '롤 전적 분석, 챔피언 추천, 연습 방법과 패치에 대해 질문하세요. '
@@ -742,7 +751,7 @@ class Window(QMainWindow):
         self.record_chat('general', question, self.answer_text(result))
         self.render_general()
         self.out_game.show_answer(result)
-        self.status.setText('완료 · ' + ('Gemini 답변' if result['generated'] else '공식 자료 검색'))
+        self.status.setText('완료 · ' + ('AI 답변' if result.get('generated') else '공식 자료 검색'))
 
     def riot_profile(self, player=None):
         player = player or get_current_summoner()

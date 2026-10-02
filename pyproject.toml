@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "riftflow"
-version = "1.0.0"
+version = "1.0.1"
 description = "League of Legends coaching desktop application"
 readme = "README.md"
 requires-python = ">=3.11"
