@@ -1,0 +1,182 @@
+"""상위 랭커 실전 빌드 통계 (서버가 밤마다 모은다).
+
+이 통계는 결론이 아니라 근거다. 아이템 추천은 통계에 오른 아이템을 후보로 삼고,
+AI가 지금 판의 상황(상대 조합, 내 상태와 가진 아이템, 골드, 모드)을 보고 그중에서 고른다.
+
+수집: 솔로 랭크 챌린저·그랜드마스터 플레이어의 최근 경기(MATCH-V5)에서 참가자마다
+챔피언, 포지션, 마지막 아이템 6칸, 핵심 룬, 승패를 저장한다. 소환사 이름·PUUID는 저장하지 않는다.
+저장 위치는 공식 게임 자료와 같은 DB(knowledge DB)라서 추천 코드가 같은 경로로 읽는다.
+"""
+import json
+import sqlite3
+import time
+from contextlib import closing
+from pathlib import Path
+
+from .documents import cached
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS build_matches (
+    match_id TEXT PRIMARY KEY,
+    patch TEXT NOT NULL,
+    collected_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS build_samples (
+    match_id TEXT NOT NULL,
+    patch TEXT NOT NULL,
+    champion TEXT NOT NULL,
+    position TEXT,
+    items TEXT NOT NULL,
+    keystone INTEGER,
+    primary_style INTEGER,
+    sub_style INTEGER,
+    win INTEGER NOT NULL,
+    PRIMARY KEY (match_id, champion)
+);
+CREATE INDEX IF NOT EXISTS build_samples_champion ON build_samples (champion, patch);
+"""
+QUEUE = 420                 # 솔로 랭크
+MIN_GAMES = 15              # 이보다 적으면 통계 대신 분류별 규칙으로 후보를 정한다
+MIN_RATE = 0.05             # 이 비율 이상 완성한 아이템만 후보로 쓴다
+KEEP_PATCHES = 3            # 최근 패치 몇 개까지 남길지
+
+
+def connect(path):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(path, timeout=30)
+    db.executescript(SCHEMA)
+    return db
+
+
+def patch_of(game_version):
+    """'16.19.734.1234' → '16.19'."""
+    parts = str(game_version or '').split('.')
+    return '.'.join(parts[:2]) if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit() else None
+
+
+def samples_from_match(detail):
+    """경기 상세 하나 → 참가자별 표본. 협곡 솔로 랭크가 아니거나 다시하기(조기 종료) 경기면 빈 목록."""
+    info = (detail or {}).get('info') or {}
+    if info.get('queueId') != QUEUE or (info.get('gameDuration') or 0) < 15 * 60:
+        return [], None
+    patch = patch_of(info.get('gameVersion'))
+    if patch is None:
+        return [], None
+    samples = []
+    for player in info.get('participants') or []:
+        champion = player.get('championName')
+        if not champion:
+            continue
+        items = [player.get('item%d' % slot) for slot in range(6)]
+        styles = (player.get('perks') or {}).get('styles') or []
+        primary = styles[0] if styles else {}
+        selections = primary.get('selections') or []
+        samples.append({
+            'champion': champion, 'position': (player.get('teamPosition') or '').upper() or None,
+            'items': [int(i) for i in items if isinstance(i, int) and i > 0],
+            'keystone': selections[0].get('perk') if selections else None,
+            'primary_style': primary.get('style'), 'sub_style': styles[1].get('style') if len(styles) > 1 else None,
+            'win': bool(player.get('win'))})
+    return samples, patch
+
+
+def save_match(db, match_id, detail, now=None):
+    samples, patch = samples_from_match(detail)
+    if patch is None:
+        patch = 'skip'                          # 다시 받지 않도록 기록만 남긴다
+    db.execute('INSERT OR IGNORE INTO build_matches VALUES (?, ?, ?)', (match_id, patch, now or time.time()))
+    for sample in samples:
+        db.execute('INSERT OR REPLACE INTO build_samples VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                   (match_id, patch, sample['champion'], sample['position'], json.dumps(sample['items']),
+                    sample['keystone'], sample['primary_style'], sample['sub_style'], int(sample['win'])))
+    return len(samples)
+
+
+def prune(db, keep=KEEP_PATCHES):
+    """최근 패치 keep개만 남긴다 (오래된 메타가 근거로 섞이지 않게, DB가 계속 커지지 않게)."""
+    patches = sorted({row[0] for row in db.execute("SELECT DISTINCT patch FROM build_samples")},
+                     key=lambda p: tuple(int(n) for n in p.split('.')), reverse=True)
+    for old in patches[keep:]:
+        db.execute('DELETE FROM build_samples WHERE patch=?', (old,))
+
+
+def collect(db, gateway, *, players=300, matches=900, days=7, log=print, clock=time.time):
+    """챌린저·그랜드마스터 플레이어의 최근 솔로 랭크 경기를 matches개까지 모은다. 이미 받은 경기는 건너뛴다.
+
+    gateway.get(routing, path, params)는 server.riot_data.RiotGateway와 같다 (한도·재시도 포함).
+    """
+    puuids = []
+    for tier in ('challengerleagues', 'grandmasterleagues'):
+        league = gateway.get('platform', '/lol/league/v4/%s/by-queue/RANKED_SOLO_5x5' % tier) or {}
+        entries = sorted(league.get('entries') or [], key=lambda e: -(e.get('leaguePoints') or 0))
+        puuids += [e['puuid'] for e in entries if e.get('puuid')]
+        if len(puuids) >= players:
+            break
+    known = {row[0] for row in db.execute('SELECT match_id FROM build_matches')}
+    since = int(clock() - days * 86400)
+    fetched = saved = 0
+    for puuid in puuids[:players]:
+        if fetched >= matches:
+            break
+        ids = gateway.get('region', '/lol/match/v5/matches/by-puuid/%s/ids' % puuid,
+                          {'queue': QUEUE, 'type': 'ranked', 'startTime': since, 'start': 0, 'count': 10}) or []
+        for match_id in ids:
+            if match_id in known or fetched >= matches:
+                continue
+            known.add(match_id)
+            detail = gateway.get('region', '/lol/match/v5/matches/%s' % match_id)
+            fetched += 1
+            if detail:
+                with db:
+                    saved += save_match(db, match_id, detail)
+        if fetched and fetched % 100 < 10:
+            log('경기 %d개 받음, 표본 %d개 저장' % (fetched, saved))
+    with db:
+        prune(db)
+    log('완료: 경기 %d개, 표본 %d개' % (fetched, saved))
+    return fetched, saved
+
+
+def item_popularity(db_path, champion, position=None):
+    """{'games': 표본 수, 'patch': 패치들, 'items': {아이템 ID: 완성 비율}, 'keystones': {룬 ID: 비율}}.
+
+    최근 패치 2개를 합쳐 센다. 포지션을 주면 그 포지션 표본만 (표본이 MIN_GAMES보다 적으면 포지션 구분 없이).
+    """
+    return cached('build-popularity:%s:%s' % (champion, position), db_path,
+                  lambda path: _popularity(path, champion, position))
+
+
+def _popularity(db_path, champion, position):
+    empty = {'games': 0, 'patch': [], 'items': {}, 'keystones': {}}
+    if not champion or not Path(db_path).exists():
+        return empty
+    try:
+        with closing(sqlite3.connect(str(db_path))) as db:
+            if not db.execute("SELECT name FROM sqlite_master WHERE name='build_samples'").fetchone():
+                return empty
+            patches = sorted({r[0] for r in db.execute('SELECT DISTINCT patch FROM build_samples WHERE champion=?',
+                                                       (champion,))},
+                             key=lambda p: tuple(int(n) for n in p.split('.')), reverse=True)[:2]
+            if not patches:
+                return empty
+            marks = ','.join('?' * len(patches))
+            rows = []
+            if position:
+                rows = db.execute('SELECT items, keystone FROM build_samples WHERE champion=? AND position=? AND patch IN (%s)'
+                                  % marks, (champion, position, *patches)).fetchall()
+            if len(rows) < MIN_GAMES:
+                rows = db.execute('SELECT items, keystone FROM build_samples WHERE champion=? AND patch IN (%s)' % marks,
+                                  (champion, *patches)).fetchall()
+    except sqlite3.Error:
+        return empty
+    items, keystones = {}, {}
+    for raw, keystone in rows:
+        for item_id in set(json.loads(raw)):
+            items[item_id] = items.get(item_id, 0) + 1
+        if keystone:
+            keystones[keystone] = keystones.get(keystone, 0) + 1
+    games = len(rows)
+    return {'games': games, 'patch': patches,
+            'items': {item_id: round(count / games, 3) for item_id, count in items.items()} if games else {},
+            'keystones': {rune: round(count / games, 3) for rune, count in keystones.items()} if games else {}}

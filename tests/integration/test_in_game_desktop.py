@@ -16,6 +16,11 @@ from knowledge.in_game import champion_profiles, item_catalog, team_composition
 from ui.__main__ import HOME, INGAME, PICK, Window, collect_phase
 
 
+# Data Dragon처럼 능력치에 맞는 아이템 태그 (아이템 후보는 챔피언 분류와 태그로 고른다)
+STAT_TAGS = {'FlatMagicDamageMod': 'SpellDamage', 'FlatArmorMod': 'Armor', 'FlatSpellBlockMod': 'SpellBlock',
+             'FlatHPPoolMod': 'Health'}
+
+
 def player(name, champion, team, position, items=(), kills=0, dead=False):
     return PlayerLiveStats(name, champion, team, position, 9, kills, 1, 2, 120, dead, 12.0 if dead else 0.0,
                            [{'itemID': item_id, 'slot': slot} for slot, item_id in enumerate(items)], 1000.0)
@@ -54,12 +59,12 @@ class InGameDesktopTests(unittest.TestCase):
                     ('1056', '도란의 반지', '주문력 +18 체력', 400, {'FlatMagicDamageMod': 18}, {}),
                     ('3157', '존야의 모래시계', '주문력 방어력 경직', 3250, {'FlatMagicDamageMod': 105, 'FlatArmorMod': 50}, {}),
                     ('3089', '라바돈의 죽음모자', '주문력 대폭 증가', 3500, {'FlatMagicDamageMod': 130}, {}),
-                    ('3065', '정령의 형상', '마법 저항력 체력', 2900, {'FlatSpellBlockMod': 60}, {}),
+                    ('3102', '밴시의 장막', '주문력 마법 저항력 주문 보호막', 3000, {'FlatMagicDamageMod': 105, 'FlatSpellBlockMod': 40}, {}),
                     ('223089', '라바돈의 죽음모자', '아레나 복사본', 2500, {'FlatMagicDamageMod': 130}, {}),
                     ('4636', '밤의 수확자', '상점에 없음', 2765, {'FlatMagicDamageMod': 80}, {'inStore': False})):
                 save(db, 'item', '16.19.1', item_id, name, json.dumps(
                     dict({'name': name, 'description': text, 'gold': {'total': gold, 'purchasable': True},
-                          'maps': {'11': True}, 'stats': stats, 'into': []}, **extra),
+                          'maps': {'11': True}, 'stats': stats, 'into': [], 'tags': [STAT_TAGS[k] for k in stats if k in STAT_TAGS]}, **extra),
                     ensure_ascii=False), 'https://example.com/item')
 
     def test_scoreboard_uses_my_team_and_official_item_names(self):
@@ -90,13 +95,13 @@ class InGameDesktopTests(unittest.TestCase):
     def test_store_filter_drops_mode_copies_and_unbuyable_items(self):
         from knowledge.documents import get_documents
         ids = sorted(d['entity_id'] for d in get_documents(kind='item', db_path=self.db))
-        self.assertEqual(ids, ['1056', '3065', '3089', '3157'])      # 223089(아레나), 4636(상점 없음) 제외
+        self.assertEqual(ids, ['1056', '3089', '3102', '3157'])      # 223089(아레나), 4636(상점 없음) 제외
 
     def test_item_options_are_chosen_only_from_code_candidates(self):
         view = describe_scoreboard(context(), item_catalog(self.db))
         reply = {'options': [{'item_id': 3089, 'reason': '주문력을 크게 올립니다.'},
                              {'item_id': 3157, 'reason': '상대 돌진을 버팁니다.'},
-                             {'item_id': 3065, 'reason': '마법 피해를 버팁니다.'}], 'summary': '상황에 맞게 고르세요.'}
+                             {'item_id': 3102, 'reason': '마법 피해를 버팁니다.'}], 'summary': '상황에 맞게 고르세요.'}
         generator = Mock(side_effect=[{'text': json.dumps({'options': [{'item_id': 4636, 'reason': 'x'}], 'summary': ''})},
                                       {'text': json.dumps(reply, ensure_ascii=False)}])
         result = answer_in_game(self.db, view, '지금 뭐 사야 해?', generate=generator)
@@ -127,7 +132,7 @@ class InGameDesktopTests(unittest.TestCase):
         items = store_items(self.db)
         rabadon = dict(items[3089], **{'from': ['1056']})                 # 도란의 반지(400)를 재료로 가정
         self.assertEqual(remaining_cost(rabadon, items, view['me']), 3100)
-        reply = {'options': [{'item_id': 3089, 'reason': '주문력'}, {'item_id': 3065, 'reason': '마저'},
+        reply = {'options': [{'item_id': 3089, 'reason': '주문력'}, {'item_id': 3102, 'reason': '마저'},
                              {'item_id': 3157, 'reason': '생존'}, {'item_id': 3089, 'reason': '넷째는 버림'}], 'summary': ''}
         generator = Mock(return_value={'text': json.dumps(reply, ensure_ascii=False)})
         result = answer_in_game(self.db, view, '뭐 사야 해?', generate=generator)

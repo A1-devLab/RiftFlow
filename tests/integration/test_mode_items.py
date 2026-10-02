@@ -12,13 +12,18 @@ from knowledge.collector import connect, save
 from knowledge.documents import item_map_for
 from knowledge.in_game import current_names
 
+# Data Dragon처럼 능력치에 맞는 아이템 태그 (아이템 후보는 챔피언 분류와 태그로 고른다)
+STAT_TAGS = {'FlatMagicDamageMod': 'SpellDamage', 'FlatArmorMod': 'Armor', 'FlatSpellBlockMod': 'SpellBlock',
+             'FlatHPPoolMod': 'Health'}
+
+
 ITEMS = [  # id, name, price, maps, stats
     ('3089', '라바돈의 죽음모자', 3500, {'11': True, '12': True, '30': False}, {'FlatMagicDamageMod': 130}),
     ('773089', '라바돈의 죽음모자', 3300, {'11': False, '12': True, '30': False}, {'FlatMagicDamageMod': 130}),
     ('223089', '라바돈의 죽음모자', 2500, {'11': False, '12': False, '30': True}, {'FlatMagicDamageMod': 130}),
     ('3157', '존야의 모래시계', 3250, {'11': True, '12': True, '30': False}, {'FlatMagicDamageMod': 105, 'FlatArmorMod': 50}),
     ('223157', '존야의 모래시계', 2500, {'11': False, '12': False, '30': True}, {'FlatMagicDamageMod': 105, 'FlatArmorMod': 50}),
-    ('3065', '정령의 형상', 2900, {'11': True, '12': True, '30': False}, {'FlatSpellBlockMod': 60}),
+    ('3102', '밴시의 장막', 3000, {'11': True, '12': True, '30': False}, {'FlatMagicDamageMod': 105, 'FlatSpellBlockMod': 40}),
     ('663056', '불사대마왕의 왕관', 2500, {'11': True, '12': False, '30': False}, {'FlatArmorMod': 40}),
 ]
 
@@ -32,7 +37,8 @@ class ModeItemTests(unittest.TestCase):
             for item_id, name, price, maps, stats in ITEMS:
                 save(db, 'item', '16.19.1', item_id, name, json.dumps(
                     {'name': name, 'description': name + ' 효과', 'gold': {'total': price, 'purchasable': True},
-                     'maps': maps, 'stats': stats, 'into': []}, ensure_ascii=False), 'https://x')
+                     'maps': maps, 'stats': stats, 'into': [],
+                     'tags': [STAT_TAGS[k] for k in stats if k in STAT_TAGS]}, ensure_ascii=False), 'https://x')
             for key, id_, name in ((103, 'Ahri', '아리'), (99, 'Lux', '럭스')):
                 save(db, 'champion', '16.19.1', id_, name, json.dumps(
                     {'key': str(key), 'id': id_, 'name': name, 'blurb': name, 'tags': ['Mage'],
@@ -56,7 +62,7 @@ class ModeItemTests(unittest.TestCase):
         arena = prices('30')
         self.assertEqual(set(arena), {'라바돈의 죽음모자', '존야의 모래시계'})
         self.assertEqual(arena['존야의 모래시계'], (223157, 2500))
-        self.assertNotIn('정령의 형상', current_names(self.db, '30')['items'])
+        self.assertNotIn('밴시의 장막', current_names(self.db, '30')['items'])
 
     def test_live_game_mode_drives_item_options(self):
         from contracts.riot import ConnectionState, LiveMatchStatus, LiveState, PlayerLiveStats, TeamGoldTotals
@@ -67,7 +73,7 @@ class ModeItemTests(unittest.TestCase):
                                     'active_player_name': 'Me', 'game': {'game_mode': 'ARAM', 'map_number': 12}}, {})
         self.assertEqual(view['mode_name'], '칼바람 나락')
         reply = {'options': [{'item_id': 773089, 'reason': '주문력'}, {'item_id': 3157, 'reason': '생존'},
-                             {'item_id': 3065, 'reason': '마저'}], 'summary': '고르세요'}
+                             {'item_id': 3102, 'reason': '마저'}], 'summary': '고르세요'}
         generate = Mock(return_value={'text': json.dumps(reply, ensure_ascii=False)})
         result = recommend_items(self.db, view, '뭐 사야 해?', generate=generate, prompt_player=prompt_player)
         self.assertTrue(result['generated'])

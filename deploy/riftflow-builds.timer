@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily RiftFlow build statistics
+
+[Timer]
+# 매일 새벽 3시 30분(사용자가 가장 적은 시간). 공식 자료 갱신(5시)보다 먼저 끝나게 한다.
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target
