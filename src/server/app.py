@@ -14,6 +14,7 @@ from typing import List, Optional
 
 import requests
 from fastapi import Depends, FastAPI, Header, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -42,7 +43,7 @@ class RuneBody(BaseModel):
 
 class PickBody(BaseModel):
     question: str = Field(min_length=1, max_length=1000)
-    champion: str = Field(min_length=1, max_length=40)
+    champion: str = Field(default="", max_length=40)   # 비어 있으면 일반 질문으로 답한다 (예전: 422 거절)
     opponent: Optional[str] = Field(default=None, max_length=40)
     view: dict = Field(default_factory=dict)
     user_requests: List[str] = Field(default_factory=list, max_length=5)
@@ -141,6 +142,13 @@ def create_app(settings=None, gateway=None, clock=time.time, generate=None):
     cleaned = {"day": None}
 
     app = FastAPI(title="RiftFlow API", docs_url=None, redoc_url=None, openapi_url=None)
+
+    @app.exception_handler(RequestValidationError)
+    def invalid_request(_request, _error):
+        # FastAPI 기본 422 본문({'detail': [...]})은 앱이 읽지 못해 '요청이 실패했습니다 (422)'만 보였다.
+        return JSONResponse({"error": {"code": "invalid_request",
+                                       "message": "요청 형식이 맞지 않습니다. 앱을 최신 버전으로 업데이트해 주세요."}},
+                            status_code=422)
 
     @app.exception_handler(ApiError)
     def api_error(_request, error):

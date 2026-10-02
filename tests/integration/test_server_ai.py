@@ -147,6 +147,16 @@ class ServerAiTests(unittest.TestCase):
         self.assertLessEqual(codes.count(200), 5)
         self.assertLessEqual(self.generate.call_count, 5)
 
+    def test_pick_question_before_choosing_a_champion_is_answered(self):
+        """예전에는 챔피언이 비어 있으면 422로 거절해 앱에 '요청이 실패했습니다 (422)'만 보였다."""
+        self.generate.return_value = {'text': '티모 서폿에는 원거리 견제가 좋은 원딜이 어울립니다.'}
+        response = self.post('/v1/coach/pick', {'question': '티모 서폿이랑 어울리는거 뭐 있어?', 'champion': ''})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('티모', response.json()['answer'])
+        bad = self.post('/v1/coach/pick', {'question': ''})
+        self.assertEqual(bad.status_code, 422)
+        self.assertEqual(bad.json()['error']['code'], 'invalid_request')     # 앱이 읽을 수 있는 안내
+
     def test_no_model_call_is_not_charged(self):
         """모델을 부르지 않은 답(게임 중이 아님 등)은 한도에서 빼 준다."""
         for _ in range(7):

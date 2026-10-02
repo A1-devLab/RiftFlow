@@ -65,6 +65,13 @@ class AiService:
         return dict(result, cached=False), result.get('attempts') or 0
 
     def pick(self, body):
+        champion = payloads.text(body.get('champion'))
+        if champion in ('', '선택 전'):
+            # 챔피언을 고르기 전에 물은 질문('티모 서폿이랑 어울리는 거?')은 일반 질문으로 답한다.
+            result = ask_general(self.knowledge_path, payloads.text(body.get('question'), 1000), generate=self.generate,
+                                 history=payloads.history(body.get('history')))
+            return {'answer': result.get('answer'), 'message': result.get('message'),
+                    'generated': bool(result.get('generated'))}, 1
         view = payloads.pick_view(body.get('view'))
         result = answer_before_game(self.knowledge_path, None, None, view, payloads.text(body.get('question'), 1000),
                                     generate=self.generate, champion=payloads.text(body.get('champion')),

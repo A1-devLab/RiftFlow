@@ -112,6 +112,17 @@ class WindowStateTests(unittest.TestCase):
         window.failed('룬 적용 실패')
         self.assertEqual(window.before_game.answer.toPlainText(), '픽창 대화')
 
+    def test_pick_chat_without_champion_uses_the_general_coach(self):
+        window = self.window()
+        window.before_game.champion.setText('')
+        with patch.dict(os.environ, {'HASA_API_KEY': 'k'}),              patch.object(window, 'general_answer', return_value={'answer': '원딜과 잘 맞습니다.', 'generated': True}) as general,              patch('ui.__main__.answer_before_game') as pick:
+            window.ask_before_game(dict(window.before_game._request('티모 서폿이랑 어울리는거 뭐 있어?')))
+            while window.jobs:
+                self.app.processEvents()
+        general.assert_called_once()
+        pick.assert_not_called()
+        self.assertIn('원딜과 잘 맞습니다.', window.before_game.answer.toPlainText())
+
     def test_missing_key_ends_the_loading_screen(self):
         from ui.pages.out_game import OutGamePage
         page = OutGamePage()
