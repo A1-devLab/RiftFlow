@@ -89,6 +89,24 @@ class BuildStatsTests(unittest.TestCase):
         self.assertEqual(sum(1 for c in calls if c.startswith('/lol/match/v5/matches/KR')), 3)
 
 
+    def test_collector_waits_out_the_shared_rate_limit(self):
+        class Busy(Exception):
+            retry_after = 30
+        waits, state = [], {'busy': 2}
+
+        class Gateway:
+            def get(self, routing, path, params=None):
+                if 'challengerleagues' in path and state['busy']:
+                    state['busy'] -= 1
+                    raise Busy()
+                if 'leagues' in path:
+                    return {'entries': [{'puuid': 'p1', 'leaguePoints': 1}]}
+                return ['KR_9'] if path.endswith('/ids') else match('KR_9')
+        with closing(connect(self.path)) as db:
+            fetched, _ = collect(db, Gateway(), players=1, matches=5, log=lambda m: None, sleep=waits.append)
+        self.assertEqual((fetched, waits), (1, [35, 35]))       # 그만두지 않고 기다렸다 이어서 받는다
+
+
 class CandidateTests(unittest.TestCase):
     def pool(self, owned=(), popularity=None, profile=LEBLANC):
         from game_phases.in_game.items import candidates
