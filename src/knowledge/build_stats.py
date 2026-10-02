@@ -150,7 +150,7 @@ def collect(db, gateway, *, players=300, matches=900, days=7, log=print, clock=t
             break
     known = {row[0] for row in db.execute('SELECT match_id FROM build_matches')}
     since = int(clock() - days * 86400)
-    fetched = saved = 0
+    fetched = saved = logged = 0
     for puuid in puuids[:players]:
         if fetched >= matches:
             break
@@ -165,7 +165,8 @@ def collect(db, gateway, *, players=300, matches=900, days=7, log=print, clock=t
             if detail:
                 with db:
                     saved += save_match(db, match_id, detail)
-        if fetched and fetched % 100 < 10:
+        if fetched >= logged + 50:                   # 50경기마다 한 줄 (예전: 같은 줄이 여러 번 찍힘)
+            logged = fetched
             log('경기 %d개 받음, 표본 %d개 저장' % (fetched, saved))
     with db:
         prune(db)
