@@ -119,6 +119,17 @@ class CandidateTests(unittest.TestCase):
         self.assertEqual((luden['role'], luden['from_owned'], luden['remaining_cost']), ('완성 가능', '사라진 양피지', 1550))
         self.assertNotIn('사라진 양피지', [c['name'] for c in pool])            # 가진 재료는 다시 추천하지 않음
 
+    def test_an_upgrade_of_an_owned_component_must_be_offered(self):
+        from game_phases.in_game.items import validate
+        pool = self.pool(owned=[3802])
+        others = [c['item_id'] for c in pool if c['role'] != '완성 가능'][:3]
+        options, errors = validate({'options': [{'item_id': i, 'reason': 'r'} for i in others]}, pool)
+        self.assertIsNone(options)
+        self.assertTrue(any('루덴의 메아리' in e for e in errors))           # 다시 고르게 하며 무엇을 넣을지 알려 준다
+        options, errors = validate({'options': [{'item_id': 6655, 'reason': '양피지에서 완성'}] +
+                                               [{'item_id': i, 'reason': 'r'} for i in others[:2]]}, pool)
+        self.assertEqual((errors, options[0]['role']), ([], '완성 가능'))
+
     def test_class_rules_drop_items_that_do_not_fit(self):
         names = [c['name'] for c in self.pool()]
         self.assertIn('라바돈의 죽음모자', names)
