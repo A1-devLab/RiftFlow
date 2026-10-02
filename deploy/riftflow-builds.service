@@ -1,0 +1,15 @@
+# 상위 랭커 빌드 통계를 모아 공식 자료 DB에 쌓는다. riftflow-builds.timer가 하루 한 번 실행.
+# API 서버와 같은 라이엇 키를 쓰므로 한도를 낮게 둔다 (RIFTFLOW_BUILD_LIMITS, 기본 1초 5회·2분 40회).
+[Unit]
+Description=RiftFlow high-elo build statistics
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/riftflow
+EnvironmentFile=%h/riftflow/server.env
+Environment=PYTHONPATH=%h/riftflow/app/src
+ExecStart=%h/riftflow/.venv/bin/python -m server.collect_builds
+MemoryMax=384M
+CPUQuota=50%
+Nice=15
+TimeoutStartSec=3h

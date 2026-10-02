@@ -20,9 +20,11 @@ else
 fi
 
 cp ~/riftflow/app/deploy/riftflow-api.service ~/riftflow/app/deploy/riftflow-knowledge.service \
-   ~/riftflow/app/deploy/riftflow-knowledge.timer ~/.config/systemd/user/
+   ~/riftflow/app/deploy/riftflow-knowledge.timer ~/riftflow/app/deploy/riftflow-builds.service \
+   ~/riftflow/app/deploy/riftflow-builds.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now riftflow-knowledge.timer >/dev/null || echo "자료 갱신 타이머를 켜지 못했습니다: systemctl --user status riftflow-knowledge.timer"
+systemctl --user enable --now riftflow-builds.timer >/dev/null || echo "빌드 통계 타이머를 켜지 못했습니다: systemctl --user status riftflow-builds.timer"
 
 # 공식 자료가 아직 없으면 한 번 바로 받는다 (1분 안팎).
 if [ ! -s ~/riftflow/data/riftflow.db ]; then

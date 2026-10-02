@@ -9,6 +9,7 @@
 import json
 import sqlite3
 
+from knowledge.build_stats import MIN_GAMES, MIN_RATE
 from knowledge.documents import get_documents, item_map_for, plain
 from knowledge.in_game import champion_profiles, team_composition
 from rag.gemini import GeminiError
@@ -18,6 +19,8 @@ ITEM_SYSTEM = """너는 리그 오브 레전드 게임 중 아이템 코치다. 
 
 반드시 지킬 것:
 - candidates에 있는 item_id만 고른다. 후보에 없는 아이템은 이번 패치 협곡 상점에 없거나 지금 상황에 맞지 않는 것이다.
+- 후보의 role은 출처다. '완성 가능'(from_owned)은 이미 가진 재료로 완성하는 아이템이라 남은 비용이 적다. 상황에 맞으면 우선 고려하고, 이유에 어떤 재료에서 이어지는지 밝힌다.
+- pick_rate는 상위 랭커가 이 챔피언으로 그 아이템을 완성한 비율(0~1)이다. 기본 근거로 삼되 비율만으로 고르지 말고, 지금 상대 조합과 내 상태에 맞춰 고른다. pick_rate가 없는 후보는 통계가 아니라 분류 규칙으로 들어온 것이다.
 - 정확히 3개를 고른다. 서로 성격이 다른 선택지(예: 공격 강화, 생존, 상대 대응)를 섞어 사용자가 고르게 한다.
 - reason은 25자 안팎의 짧은 구절 하나로 쓴다. 그 아이템만의 공식 효과(effect)와 지금 상황을 잇되 문장을 길게 늘이지 않는다. 예: '상대 AP 3명 상대로 마저와 보호막'.
 - reason은 한국어로만 쓴다 (burst 같은 영어 단어 금지). effect에 없는 효과(예: 반사, 부활)를 다른 아이템과 헷갈려 쓰지 않는다.
@@ -43,12 +46,9 @@ RESPONSE_SCHEMA = {
 }
 JSON_CONFIG = {'responseMimeType': 'application/json', 'responseSchema': RESPONSE_SCHEMA}
 MAX_ATTEMPTS = 2
+POSITION_KEYS = {'TOP': 'TOP', 'JUNGLE': 'JUNGLE', 'MIDDLE': 'MIDDLE', 'BOTTOM': 'BOTTOM', 'UTILITY': 'UTILITY'}
 PICKS = 3
 MAX_CANDIDATES = 30
-OFFENSE_SLOTS = 14
-DEFENSE_SLOTS = 9
-OFFENSE = {'AP': ('FlatMagicDamageMod',),
-           'AD': ('FlatPhysicalDamageMod', 'FlatCritChanceMod', 'PercentAttackSpeedMod')}
 
 
 def store_items(db_path, item_map='11'):
@@ -96,42 +96,173 @@ def remaining_cost(item, items, me):
     return max(0, item['gold'] - saved)
 
 
-def candidates(items, me, composition, my_rating):
-    """코드가 고르는 구매 후보. 이미 가진 아이템과 같은 이름의 중복은 뺀다."""
-    owned_ids = {entry['id'] for entry in (me or {}).get('items', [])}
-    owned_names = {entry['name'] for entry in (me or {}).get('items', [])}
+# 챔피언 분류별 아이템 규칙. 통계(build_stats)가 부족한 챔피언의 후보를 정할 때 쓴다.
+# 예전에는 '능력치가 하나라도 겹치는가 + 비싼 순'으로만 골라 르블랑에게 망자의 갑옷, 징크스에게 태양불꽃 방패가 후보로 갔다.
+BOOTS = {
+    'mage': ('마법사의 신발', '명석함의 아이오니아 장화', '판금 장화', '헤르메스의 발걸음'),
+    'marksman': ('광전사의 군화', '판금 장화', '헤르메스의 발걸음', '신속의 장화'),
+    'ad_assassin': ('명석함의 아이오니아 장화', '판금 장화', '헤르메스의 발걸음', '신속의 장화'),
+    'fighter': ('판금 장화', '헤르메스의 발걸음', '명석함의 아이오니아 장화', '광전사의 군화'),
+    'tank': ('판금 장화', '헤르메스의 발걸음', '명석함의 아이오니아 장화'),
+    'support': ('명석함의 아이오니아 장화', '신속의 장화', '판금 장화', '헤르메스의 발걸음'),
+}
+CLASS_SLOTS = 12            # 통계가 없을 때 분류 규칙으로 넣는 공격 후보 수
+POPULAR_SLOTS = 16          # 통계에서 넣는 후보 수
+DEFENSE_CLASS_SLOTS = 6
+
+
+def archetype(profile, my_rating=None):
+    """Data Dragon 분류 태그(첫 태그가 주 분류)와 피해 유형으로 아이템 성향을 정한다."""
+    tags = (profile or {}).get('tags') or []
+    rating = (profile or {}).get('damage_rating') or my_rating
+    primary = tags[0] if tags else None
+    if primary == 'Marksman':
+        return 'marksman'
+    if primary == 'Tank':
+        return 'tank'
+    if primary == 'Support':
+        return 'support'
+    if rating == 'AP' or primary == 'Mage':
+        return 'mage'
+    if primary == 'Assassin':
+        return 'ad_assassin'
+    return 'fighter'
+
+
+def _tags(item):
+    return set(item['tags'])
+
+
+def class_fit(item, kind):
+    """이 분류가 쓰는 아이템이면 'offense' 또는 'defense', 아니면 None."""
+    t = _tags(item)
+    defensive = bool(t & {'Armor', 'SpellBlock', 'Health'})
+    if kind == 'mage':
+        if 'SpellDamage' not in t or t & {'AttackSpeed', 'OnHit', 'CriticalStrike', 'Damage'}:
+            return None
+        return 'defense' if t & {'Armor', 'SpellBlock'} else 'offense'
+    if kind == 'marksman':
+        if 'SpellDamage' in t:
+            return None
+        if t & {'CriticalStrike'} or ('AttackSpeed' in t and t & {'Damage', 'OnHit'}) or {'Damage', 'LifeSteal'} <= t:
+            return 'offense'
+        return 'defense' if 'Damage' in t and t & {'Armor', 'SpellBlock'} else None
+    if kind == 'ad_assassin':
+        if 'Damage' not in t or t & {'SpellDamage', 'CriticalStrike', 'AttackSpeed'}:
+            return None
+        if t & {'ArmorPenetration', 'AbilityHaste', 'CooldownReduction'}:
+            return 'defense' if t & {'Armor', 'SpellBlock'} else 'offense'
+        return 'defense' if t & {'Armor', 'SpellBlock'} else None
+    if kind == 'fighter':
+        if t & {'SpellDamage', 'CriticalStrike'}:
+            return None
+        if 'Damage' in t and t & {'Health', 'AbilityHaste', 'CooldownReduction', 'LifeSteal', 'ArmorPenetration'}:
+            return 'defense' if t & {'Armor', 'SpellBlock'} else 'offense'
+        return 'defense' if 'Health' in t and t & {'Armor', 'SpellBlock'} else None
+    if kind == 'tank':
+        if t & {'Damage', 'CriticalStrike', 'AttackSpeed', 'LifeSteal'} or 'SpellDamage' in t:
+            return None
+        return 'offense' if defensive else None
+    if kind == 'support':
+        # 유틸 서포터(잔나·소나 등). 탱커형 서포터(레오나 등)는 주 분류가 Tank라 tank 규칙을 쓴다.
+        if t & {'Damage', 'CriticalStrike', 'AttackSpeed', 'LifeSteal'}:
+            return None
+        if t & {'ManaRegen', 'Aura'}:
+            if not t & {'Armor', 'SpellBlock'}:
+                return 'offense'
+            # 방어 능력치가 있으면 아군을 지키는 사용 효과가 있는 것만 (솔라리·기사의 맹세). 태양불꽃 같은 탱커 아이템은 뺀다.
+            return 'defense' if 'Active' in t else None
+        return None
+    return None
+
+
+def _store_upgrades(item, items, depth=2):
+    """가진 재료 하나로 이어지는 상점 아이템 (상위 단계까지). 모드 전용판 ID는 상점 목록에 없어서 빠진다."""
+    found, frontier = [], [item]
+    for _ in range(depth):
+        nxt = []
+        for current in frontier:
+            for target in current['into']:
+                upgrade = items.get(int(target)) if str(target).isdigit() else None
+                if upgrade is not None and upgrade not in found:
+                    found.append(upgrade)
+                    nxt.append(upgrade)
+        frontier = nxt
+    return found
+
+
+def _is_completed(item, items):
+    return not any(str(t).isdigit() and int(t) in items for t in item['into'])
+
+
+def candidates(items, me, composition, my_rating, profile=None, popularity=None):
+    """코드가 고르는 구매 후보. 출처를 role로 남긴다.
+
+    - 완성 가능: 이미 가진 재료로 이어지는 상위 아이템 (예: 사라진 양피지 → 루덴의 메아리). 남은 비용이 적다.
+    - 많이 삼: 상위 랭커가 이 챔피언으로 많이 완성한 아이템 (build_stats). pick_rate를 근거로 함께 준다.
+    - 공격·생존·대응: 통계가 부족하면 챔피언 분류 규칙으로 고른 아이템.
+    - 신발: 신발이 없으면 분류에 맞는 2단계 신발, 2단계가 있으면 그 강화.
+    이미 가진 아이템과 같은 이름은 뺀다. 어떤 아이템을 살지는 AI가 지금 상황을 보고 이 안에서 고른다.
+    """
+    owned = (me or {}).get('items', [])
+    owned_ids = {entry['id'] for entry in owned}
+    owned_names = {entry['name'] for entry in owned}
+    kind = archetype(profile, my_rating)
+    rates = (popularity or {}).get('items') or {}
+    use_stats = (popularity or {}).get('games', 0) >= MIN_GAMES
     ratings = composition.get('damage_rating_counts') or {}
-    offense = OFFENSE.get(my_rating) or OFFENSE['AP'] + OFFENSE['AD']
-    defense = []
-    if ratings.get('AD', 0) >= 2:
-        defense.append('FlatArmorMod')
-    if ratings.get('AP', 0) >= 2:
-        defense.append('FlatSpellBlockMod')
-    if not defense:
-        defense = ['FlatArmorMod', 'FlatSpellBlockMod']
     picked, seen = [], set()
 
-    def add(item, role):
+    def add(item, role, **extra):
         if item['id'] in owned_ids or item['name'] in owned_names or item['name'] in seen:
             return
         seen.add(item['name'])
-        picked.append({'item_id': item['id'], 'name': item['name'], 'price': item['gold'], 'role': role,
-                       'remaining_cost': remaining_cost(item, items, me), 'effect': item['effect']})
+        entry = {'item_id': item['id'], 'name': item['name'], 'price': item['gold'], 'role': role,
+                 'remaining_cost': remaining_cost(item, items, me), 'effect': item['effect']}
+        if item['id'] in rates:
+            entry['pick_rate'] = rates[item['id']]
+        entry.update(extra)
+        picked.append(entry)
 
-    completed = [i for i in items.values() if not i['into'] and i['gold'] >= 2000 and not _is_boots(i)]
-    has = lambda item, stats: any(stat in item['stats'] for stat in stats)
-    # 공격 후보가 목록을 다 채워 방어 후보가 잘리지 않도록 몫을 나눈다. 방어는 내 공격 능력치도 주는 것(예: 존야)을 앞에 둔다.
-    for item in [i for i in sorted(completed, key=lambda i: -i['gold']) if has(i, offense)][:OFFENSE_SLOTS]:
-        add(item, '공격')
-    defensive = [i for i in completed if has(i, defense)]
-    for item in sorted(defensive, key=lambda i: (not has(i, offense), -i['gold']))[:DEFENSE_SLOTS]:
+    # 1) 가진 재료의 상위 아이템. 분류에 맞는 것만 (증폭의 고서 하나에 AP 아이템 수십 개가 걸리지 않게 통계·분류로 거른다).
+    for entry in owned:
+        component = items.get(entry['id'])
+        if component is None or _is_completed(component, items) or _is_boots(component):
+            continue
+        upgrades = [u for u in _store_upgrades(component, items)
+                    if _is_completed(u, items) and not _is_boots(u) and (u['id'] in rates or class_fit(u, kind))]
+        upgrades.sort(key=lambda u: (-rates.get(u['id'], 0), -u['gold']))
+        for upgrade in upgrades[:4]:
+            add(upgrade, '완성 가능', from_owned=component['name'])
+
+    completed = [i for i in items.values() if _is_completed(i, items) and i['gold'] >= 2000 and not _is_boots(i)]
+    if use_stats:
+        # 2) 통계: 실제로 많이 완성한 아이템을 근거로 쓴다 (분류 규칙보다 우선).
+        popular = sorted((i for i in completed if rates.get(i['id'], 0) >= MIN_RATE), key=lambda i: -rates[i['id']])
+        for item in popular[:POPULAR_SLOTS]:
+            add(item, '많이 삼')
+    else:
+        offense = [i for i in completed if class_fit(i, kind) == 'offense']
+        for item in sorted(offense, key=lambda i: -i['gold'])[:CLASS_SLOTS]:
+            add(item, '공격')
+    # 3) 상대 조합 대응: 분류에 맞는 방어 아이템 중 상대 피해 유형에 맞는 것을 앞에 둔다.
+    want = []
+    if ratings.get('AD', 0) >= 2:
+        want.append('Armor')
+    if ratings.get('AP', 0) >= 2:
+        want.append('SpellBlock')
+    defense = [i for i in completed if class_fit(i, kind) == 'defense' or (kind == 'tank' and class_fit(i, kind))]
+    defense.sort(key=lambda i: (not any(tag in i['tags'] for tag in want), -rates.get(i['id'], 0), -i['gold']))
+    for item in defense[:DEFENSE_CLASS_SLOTS]:
         add(item, '생존·대응')
-    owned_boots = [i for i in (me or {}).get('items', []) if i['id'] in items and _is_boots(items[i['id']])]
+    # 4) 신발
+    owned_boots = [i for i in owned if i['id'] in items and _is_boots(items[i['id']])]
+    allowed_boots = set(BOOTS.get(kind, ()))
     for item in items.values():
         if not _is_boots(item) or item['id'] == 1001:
             continue
-        if not owned_boots and '1001' in item['from']:                          # 신발이 없으면 2단계 신발
-            add(item, '신발')
+        if not owned_boots and '1001' in item['from'] and (item['name'] in allowed_boots or rates.get(item['id'], 0) >= MIN_RATE):
+            add(item, '신발')                                                    # 신발이 없으면 분류에 맞는 2단계 신발
         elif any(str(b['id']) in item['from'] for b in owned_boots):             # 2단계 신발이 있으면 그 강화
             add(item, '신발')
     boots = [c for c in picked if c['role'] == '신발']
@@ -196,7 +327,12 @@ def recommend_items(db_path, view, question, *, generate, prompt_player):
         profiles = {}
     composition = team_composition([e['champion'] for e in enemies], profiles)
     mine = profiles.get(str((me or {}).get('champion', '')).casefold())
-    pool = candidates(items, me, composition, mine.get('damage_rating') if mine else None)
+    popularity = None
+    if mine and item_map == '11':           # 통계는 협곡 솔로 랭크 기준이라 칼바람·아레나에는 쓰지 않는다
+        from knowledge.build_stats import item_popularity
+        position = POSITION_KEYS.get((me or {}).get('position'))
+        popularity = item_popularity(db_path, mine.get('id'), position)
+    pool = candidates(items, me, composition, mine.get('damage_rating') if mine else None, mine, popularity)
     if len(pool) < 2:
         return {'answer': None, 'generated': False, 'message': '지금 상황에 맞는 구매 후보를 찾지 못했습니다.'}
     mode_name = view.get('mode_name') or {'11': '소환사의 협곡', '12': '칼바람 나락', '30': '아레나'}[item_map]
