@@ -101,11 +101,36 @@ def prune(db, keep=KEEP_PATCHES):
         db.execute('DELETE FROM build_samples WHERE patch=?', (old,))
 
 
-def collect(db, gateway, *, players=300, matches=900, days=7, log=print, clock=time.time):
+class Patient:
+    """한도 초과(RiotBusy 등 retry_after가 있는 오류)면 기다렸다 같은 요청을 다시 보낸다.
+
+    수집기는 API 서버(사용자 전적 조회)와 같은 라이엇 키를 써서 키 전체 한도에 걸릴 수 있다.
+    밤새 시간이 넉넉하므로 그만두지 않고 기다린다. 연속으로 max_waits번 막히면 그때 멈춘다.
+    """
+
+    def __init__(self, gateway, sleep=time.sleep, max_waits=8, log=print):
+        self.gateway, self.sleep, self.max_waits, self.log = gateway, sleep, max_waits, log
+
+    def get(self, routing, path, params=None):
+        waits = 0
+        while True:
+            try:
+                return self.gateway.get(routing, path, params)
+            except Exception as error:          # noqa: BLE001 - retry_after가 있는 한도 오류만 기다린다
+                retry = getattr(error, 'retry_after', None)
+                if retry is None or waits >= self.max_waits:
+                    raise
+                waits += 1
+                self.log('라이엇 한도: %d초 기다렸다 이어서 받습니다 (%d/%d)' % (int(retry) + 5, waits, self.max_waits))
+                self.sleep(retry + 5)
+
+
+def collect(db, gateway, *, players=300, matches=900, days=7, log=print, clock=time.time, sleep=time.sleep):
     """챌린저·그랜드마스터 플레이어의 최근 솔로 랭크 경기를 matches개까지 모은다. 이미 받은 경기는 건너뛴다.
 
     gateway.get(routing, path, params)는 server.riot_data.RiotGateway와 같다 (한도·재시도 포함).
     """
+    gateway = Patient(gateway, sleep=sleep, log=log)
     puuids = []
     for tier in ('challengerleagues', 'grandmasterleagues'):
         league = gateway.get('platform', '/lol/league/v4/%s/by-queue/RANKED_SOLO_5x5' % tier) or {}
