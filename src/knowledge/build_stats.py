@@ -121,7 +121,7 @@ class Patient:
                 if retry is None or waits >= self.max_waits:
                     raise
                 waits += 1
-                self.log('라이엇 한도: %d초 기다렸다 이어서 받습니다 (%d/%d)' % (int(retry) + 5, waits, self.max_waits))
+                self.log('요청 속도 한도에 맞춰 %d초 쉬었다 이어서 받습니다 (%d/%d)' % (int(retry) + 5, waits, self.max_waits))
                 self.sleep(retry + 5)
 
 
