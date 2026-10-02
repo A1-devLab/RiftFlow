@@ -19,7 +19,7 @@ ITEM_SYSTEM = """너는 리그 오브 레전드 게임 중 아이템 코치다. 
 
 반드시 지킬 것:
 - candidates에 있는 item_id만 고른다. 후보에 없는 아이템은 이번 패치 협곡 상점에 없거나 지금 상황에 맞지 않는 것이다.
-- 후보의 role은 출처다. '완성 가능'(from_owned)은 이미 가진 재료로 완성하는 아이템이라 남은 비용이 적다. 상황에 맞으면 우선 고려하고, 이유에 어떤 재료에서 이어지는지 밝힌다.
+- 후보의 role은 출처다. '완성 가능'(from_owned)은 이미 가진 재료로 완성하는 아이템이라 남은 비용이 적다. '완성 가능' 후보가 있으면 3개 중 최소 1개는 그중에서 고르고, 이유에 어떤 재료에서 이어지는지 밝힌다.
 - pick_rate는 상위 랭커가 이 챔피언으로 그 아이템을 완성한 비율(0~1)이다. 기본 근거로 삼되 비율만으로 고르지 말고, 지금 상대 조합과 내 상태에 맞춰 고른다. pick_rate가 없는 후보는 통계가 아니라 분류 규칙으로 들어온 것이다.
 - 정확히 3개를 고른다. 서로 성격이 다른 선택지(예: 공격 강화, 생존, 상대 대응)를 섞어 사용자가 고르게 한다.
 - reason은 25자 안팎의 짧은 구절 하나로 쓴다. 그 아이템만의 공식 효과(effect)와 지금 상황을 잇되 문장을 길게 늘이지 않는다. 예: '상대 AP 3명 상대로 마저와 보호막'.
@@ -298,6 +298,10 @@ def validate(answer, pool):
                             'role': by_id[item_id]['role'], 'reason': str(option.get('reason') or '').strip()})
     if len(options) != want:
         errors.append('candidates에서 서로 다른 아이템 %d개를 골라야 합니다 (지금 %d개).' % (want, len(options)))
+    upgrades = [c['name'] for c in pool if c['role'] == '완성 가능']
+    if upgrades and not any(o['role'] == '완성 가능' for o in options):
+        # 가진 재료를 살리는 선택지는 꼭 하나 보여 준다 (예: 사라진 양피지를 가졌으면 루덴의 메아리 등).
+        errors.append("가진 재료로 완성하는 '완성 가능' 후보(%s) 중 최소 1개를 골라야 합니다." % ', '.join(upgrades[:4]))
     return (options, []) if not errors else (None, errors)
 
 
