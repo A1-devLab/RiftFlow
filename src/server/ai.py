@@ -49,6 +49,10 @@ class AiService:
         if not requests:
             trees = ensure_rune_trees(self.knowledge_path)
             version = next(iter(trees.values()))['version'] if trees else 'none'
+            from knowledge.build_stats import item_popularity
+            stats = item_popularity(self.knowledge_path, canonical_champion(self.knowledge_path, champion))
+            # 통계가 쌓이면(표본 50판 단위) 공유 캐시를 새로 만든다. 예전 추천이 통계 없이 만든 것으로 남지 않게.
+            version = '%s|stats:%s:%d' % (version, ','.join(stats['patch']), stats['games'] // 50)
             cache_key = json.dumps([version, canonical_champion(self.knowledge_path, champion),
                                     canonical_champion(self.knowledge_path, opponent) if opponent else None,
                                     (view.get('mine') or {}).get('position'), view.get('game_mode')],

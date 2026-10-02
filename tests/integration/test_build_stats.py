@@ -12,7 +12,10 @@ from knowledge.build_stats import (MIN_GAMES, collect, connect, item_popularity,
 def match(match_id, version='16.19.734.1', queue=420, duration=1800, players=None):
     players = players or [{'championName': 'Leblanc', 'teamPosition': 'MIDDLE', 'win': True,
                            'item0': 6655, 'item1': 3089, 'item2': 3020, 'item3': 0, 'item4': 0, 'item5': 0, 'item6': 3340,
-                           'perks': {'styles': [{'style': 8100, 'selections': [{'perk': 8112}]}, {'style': 8200}]},
+                           'perks': {'styles': [{'style': 8100, 'selections': [{'perk': 8112}, {'perk': 8143}, {'perk': 8136},
+                                                                                {'perk': 8105}]},
+                                                {'style': 8200, 'selections': [{'perk': 8226}, {'perk': 8237}]}],
+                                     'statPerks': {'offense': 5008, 'flex': 5008, 'defense': 5011}},
                            'puuid': 'secret', 'riotIdGameName': 'Faker'}]
     return {'metadata': {'matchId': match_id},
             'info': {'queueId': queue, 'gameDuration': duration, 'gameVersion': version, 'participants': players}}
@@ -70,6 +73,24 @@ class BuildStatsTests(unittest.TestCase):
         self.assertEqual(stats['items'][6655], 1.0)
         self.assertEqual(stats['keystones'][8112], 1.0)
         self.assertEqual(item_popularity(self.path, 'Zed')['games'], 0)
+
+    def test_rune_statistics_feed_the_rune_prompt_as_grounds(self):
+        from game_phases.before_game.runes import rune_stats
+        with closing(connect(self.path)) as db, db:
+            for n in range(MIN_GAMES):
+                save_match(db, 'KR_%d' % n, match('KR_%d' % n))
+        stats = item_popularity(self.path, 'LEBLANC')                       # 대소문자가 달라도 같은 챔피언
+        self.assertEqual((stats['runes'][8143], stats['secondary_styles'][8200], stats['rune_games']), (1.0, 1.0, MIN_GAMES))
+        trees = {8100: {'id': 8100, 'name': '지배', 'slots': [[{'id': 8112, 'name': '감전'}], [{'id': 8143, 'name': '돌발 일격'}],
+                                                             [{'id': 8136, 'name': '좀비 와드'}], [{'id': 8105, 'name': '끈질긴 사냥꾼'}]]},
+                 8200: {'id': 8200, 'name': '마법', 'slots': [[{'id': 8214, 'name': '콩콩이'}], [{'id': 8226, 'name': '마나순환 팔찌'}],
+                                                             [{'id': 8237, 'name': '주문 작열'}], []]}}
+        result = rune_stats(self.path, 'Leblanc', 'middle', 'CLASSIC', trees)
+        self.assertEqual(result['keystones'], [{'name': '감전', 'rate': 1.0}])
+        self.assertEqual(result['secondary_trees'][0]['name'], '마법')
+        self.assertIn({'name': '돌발 일격', 'rate': 1.0}, result['runes'])
+        self.assertIsNone(rune_stats(self.path, 'Leblanc', 'middle', 'ARAM', trees))   # 칼바람에는 쓰지 않음
+        self.assertIsNone(rune_stats(self.path, 'Zed', 'middle', 'CLASSIC', trees))     # 표본이 없으면 통계 없이
 
     def test_collect_uses_high_elo_players_and_skips_known_matches(self):
         calls = []
