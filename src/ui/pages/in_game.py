@@ -1,6 +1,6 @@
 """Live scoreboard with estimated team gold and in-game coaching questions."""
 from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy,
     QTextBrowser, QVBoxLayout, QWidget,
@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 from game_phases.in_game.desktop import RECOMMEND_QUESTION
 from ui.match_assets import MatchAssets
 from ui.portraits import ChampionPortraits
+from ui.theme import theme
 
 ITEM_SLOTS = 7
 ITEM_PICKS = 3
@@ -39,14 +40,14 @@ class GoldBar(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         rect = QRectF(self.rect())
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor('#273850'))
+        painter.setBrush(theme.color('track'))
         painter.drawRoundedRect(rect, 7, 7)
         total = self.ally + self.enemy
         if total:
             split = rect.width() * self.ally / total
-            painter.setBrush(QColor('#d64e61'))
+            painter.setBrush(theme.color('red'))
             painter.drawRoundedRect(rect, 7, 7)
-            painter.setBrush(QColor('#397ee8'))
+            painter.setBrush(theme.color('blue'))
             painter.drawRoundedRect(QRectF(rect.x(), rect.y(), split, rect.height()), 7, 7)
         painter.end()
 
@@ -260,7 +261,7 @@ class ItemCard(QFrame):
 
 
 class TeamPanel(QFrame):
-    def __init__(self, title, portraits, assets, parent=None):
+    def __init__(self, title, portraits, assets, side='', parent=None):
         super().__init__(parent)
         self.setObjectName('teamPanel')
         box = QVBoxLayout(self)
@@ -268,6 +269,7 @@ class TeamPanel(QFrame):
         box.setSpacing(4)
         head = QHBoxLayout()
         self.title = label(title, 'teamTitle')
+        self.title.setProperty('side', side)
         self.total = label('', 'teamTotal')
         head.addWidget(self.title)
         head.addStretch()
@@ -292,7 +294,7 @@ class InGamePage(QWidget):
         super().__init__(parent)
         self.setObjectName('inGame')
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setStyleSheet(STYLE)
+        theme.style(self, STYLE)
         self.portraits = portraits or ChampionPortraits(self)
         self.assets = assets or MatchAssets(self)
         self.view = {'in_game': False}
@@ -321,8 +323,8 @@ class InGamePage(QWidget):
         self.gold_text = label('', 'subtle')
         self.gold_text.setWordWrap(True)
         left.addWidget(self.gold_text)
-        self.ally = TeamPanel('아군', self.portraits, self.assets)
-        self.enemy = TeamPanel('상대', self.portraits, self.assets)
+        self.ally = TeamPanel('아군', self.portraits, self.assets, 'ally')
+        self.enemy = TeamPanel('상대', self.portraits, self.assets, 'enemy')
         left.addWidget(self.ally)
         left.addWidget(self.enemy)
         left.addStretch()
@@ -355,6 +357,7 @@ class InGamePage(QWidget):
         self.question.setPlaceholderText('예: 지금 우리 팀이 불리해?')
         self.question.returnPressed.connect(self.submit)
         self.send = QPushButton('질문')
+        self.send.setObjectName('primary')
         self.send.clicked.connect(self.submit)
         form.addWidget(self.question, 1)
         form.addWidget(self.send)
@@ -419,37 +422,31 @@ class InGamePage(QWidget):
 
 
 STYLE = """
-QWidget#inGame { background: #101722; color: #e8edf4; }
-QWidget#inGame QLabel { background: transparent; }
-QLabel#title { color: #edf4ff; font-size: 27px; font-weight: 700; }
-QLabel#clock { background: #173a38; color: #72e2c7; border-radius: 8px; padding: 6px 10px; font-size: 16px; font-weight: 700; }
-QLabel#subtle { color: #94a8c2; font-size: 12px; }
-QLabel#panelTitle { color: #edf4ff; font-size: 18px; font-weight: 700; }
-QFrame#teamPanel, QFrame#coachPanel, QFrame#itemCard { background: #151f2e; border: 1px solid #2a3a4f; border-radius: 12px; }
-QFrame#itemPick { background: #182536; border-radius: 8px; }
-QLabel#pickIcon { background: #0e1724; border: 1px solid #2e3f56; border-radius: 5px; }
-QLabel#pickName { color: #edf4ff; font-size: 14px; font-weight: 700; }
-QLabel#pickPrice { color: #f0c86b; font-size: 13px; font-weight: 700; }
-QLabel#pickPrice[affordable="yes"] { color: #56d7b6; }
-QLabel#pickReason { color: #a9bad0; font-size: 12px; }
-QLabel#teamTitle { color: #7dc9e9; font-size: 16px; font-weight: 700; }
-QLabel#teamTotal { color: #aabbd2; font-size: 12px; }
-QFrame#playerRow { background: #182536; border: 1px solid transparent; border-radius: 8px; }
-QFrame#playerRow[me="true"] { background: #1b3439; border: 1px solid #56d7b6; }
-QLabel#rowPosition { color: #8d9cb3; font-size: 12px; }
-QLabel#rowPortrait { background: #233449; color: #a7bddb; border: 1px solid #415671; border-radius: 6px; font-weight: 700; }
-QLabel#rowChampion { font-size: 14px; font-weight: 700; color: #e8edf4; }
-QLabel#rowPlayer { font-size: 11px; color: #8d9cb3; }
-QLabel#rowDead { font-size: 11px; color: #ff8595; font-weight: 700; }
-QLabel#rowStat { color: #c0cee3; }
-QLabel#rowKda { color: #ffffff; font-size: 15px; font-weight: 700; }
-QLabel#rowGold { color: #f0c86b; font-weight: 700; }
-QLabel#rowItem { background: #0e1724; border: 1px solid #2e3f56; border-radius: 4px; }
-QTextBrowser { background: #101a28; color: #e8edf4; border: 1px solid #2a3a4f; border-radius: 10px; padding: 10px; }
-QLineEdit { background: #172334; color: #e8edf4; border: 1px solid #354860; border-radius: 7px; padding: 9px; }
-QPushButton { background: #223247; color: #e8edf4; border: 1px solid #34475e; border-radius: 7px; padding: 9px 13px; }
-QPushButton:disabled { color: #64758a; background: #18212e; }
-QPushButton#primary { background: #56d7b6; color: #09291f; border: none; font-weight: 700; }
-QPushButton#primary:disabled { background: #2c5a50; color: #88a89f; }
-QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; border: none; }
+QLabel#title { font-size: 24px; font-weight: 700; }
+QLabel#clock { background: @accent_soft; color: @accent_fg; border-radius: 8px; padding: 5px 10px; font-size: 15px; font-weight: 700; }
+QLabel#subtle { color: @muted; font-size: 12px; }
+QLabel#panelTitle { font-size: 16px; font-weight: 700; }
+QFrame#teamPanel, QFrame#coachPanel, QFrame#itemCard { background: @surface; border: 1px solid @border; border-radius: 12px; }
+QFrame#itemPick { background: @raised; border-radius: 8px; }
+QLabel#pickIcon { background: @inset; border: 1px solid @border; border-radius: 5px; }
+QLabel#pickName { font-size: 14px; font-weight: 700; }
+QLabel#pickPrice { color: @gold; font-size: 13px; font-weight: 700; }
+QLabel#pickPrice[affordable="yes"] { color: @accent_fg; }
+QLabel#pickReason { color: @text2; font-size: 12px; }
+QLabel#teamTitle { font-size: 15px; font-weight: 700; }
+QLabel#teamTitle[side="ally"] { color: @blue_fg; }
+QLabel#teamTitle[side="enemy"] { color: @red_fg; }
+QLabel#teamTotal { color: @muted; font-size: 12px; }
+QFrame#playerRow { background: @raised; border: 1px solid transparent; border-radius: 8px; }
+QFrame#playerRow[me="true"] { background: @accent_soft; border: 1px solid @accent; }
+QLabel#rowPosition { color: @muted; font-size: 12px; }
+QLabel#rowPortrait { background: @inset; color: @muted; border: 1px solid @border; border-radius: 6px; font-weight: 700; }
+QLabel#rowChampion { font-size: 14px; font-weight: 700; }
+QLabel#rowPlayer { font-size: 11px; color: @muted; }
+QLabel#rowDead { font-size: 11px; color: @red_fg; font-weight: 700; }
+QLabel#rowStat { color: @text2; }
+QLabel#rowKda { font-size: 15px; font-weight: 700; }
+QLabel#rowGold { color: @gold; font-weight: 700; }
+QLabel#rowItem { background: @inset; border: 1px solid @border; border-radius: 4px; }
+QTextBrowser { background: @raised; border: 1px solid @border; padding: 10px; }
 """

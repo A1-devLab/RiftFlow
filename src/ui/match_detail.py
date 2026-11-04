@@ -1,10 +1,12 @@
 """Completed match statistics, with a team comparison and per-player details."""
 from PySide6.QtCore import Qt, QRectF
-from PySide6.QtGui import QColor, QPainter, QFontMetrics
+from PySide6.QtGui import QPainter, QFontMetrics
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QHeaderView, QLabel, QTabWidget, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QAbstractItemView, QStackedWidget, QWidget, QHBoxLayout, QPushButton, QScrollArea,
 )
+
+from .theme import theme
 
 GROUPS = {
     '전투': [('kills', '킬'), ('deaths', '데스'), ('assists', '어시스트'),
@@ -78,7 +80,7 @@ class StatBars(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.fillRect(self.rect(), QColor('#152034'))
+        painter.fillRect(self.rect(), theme.color('surface'))
         left = 240
         track_width = max(100, self.width() - left - 132)
         max_value = max((float(raw) for _, raw in self.rows
@@ -86,14 +88,27 @@ class StatBars(QWidget):
         metrics = QFontMetrics(self.font())
         for i, (label, raw) in enumerate(self.rows):
             y = 22 + i * 44
-            painter.setPen(QColor('#cfddf1'))
+            painter.setPen(theme.color('text2'))
             painter.drawText(14, y + 19, metrics.elidedText(label, Qt.ElideRight, 210))
-            painter.fillRect(QRectF(left, y + 4, track_width, 16), QColor('#273850'))
+            painter.fillRect(QRectF(left, y + 4, track_width, 16), theme.color('track'))
             if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw >= 0 and max_value:
-                painter.fillRect(QRectF(left, y + 4, max(2, track_width * raw / max_value), 16), QColor('#64a5ff'))
-            painter.setPen(QColor('#ffffff'))
+                painter.fillRect(QRectF(left, y + 4, max(2, track_width * raw / max_value), 16), theme.color('blue'))
+            painter.setPen(theme.color('text'))
             painter.drawText(left + track_width + 12, y + 19, value(raw))
         painter.end()
+
+
+# 그래프·수치 전환 버튼은 지금 보고 있는 쪽을 누를 수 없게(disabled) 해서 '선택됨'으로 보이게 한다.
+DIALOG_STYLE = """
+QDialog, QTabWidget::pane, QStackedWidget { background: @bg; }
+QTabWidget::pane { border: 1px solid @border; border-radius: 8px; top: -1px; }
+QPushButton:disabled { background: @accent_soft; color: @accent_fg; border-color: @accent; }
+QTabBar::tab { background: transparent; color: @muted; padding: 8px 14px; margin-right: 2px; border-bottom: 2px solid transparent; font-weight: 600; }
+QTabBar::tab:hover { color: @text; }
+QTabBar::tab:selected { color: @accent_fg; border-bottom: 2px solid @accent; }
+QTableWidget { background: @surface; alternate-background-color: @raised; color: @text; gridline-color: @border; border: none; selection-background-color: @selection; selection-color: @text; }
+QHeaderView::section { background: @raised; color: @text2; padding: 8px; border: none; border-bottom: 1px solid @border; font-weight: 600; }
+"""
 
 
 class MatchDetailDialog(QDialog):
@@ -101,16 +116,7 @@ class MatchDetailDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle('경기 상세 통계')
         self.resize(1080, 760)
-        self.setStyleSheet('''
-            QDialog, QTabWidget::pane, QStackedWidget, QScrollArea { background: #101722; color: #e8edf4; }
-            QLabel, QTabBar { color: #e8edf4; }
-            QComboBox, QPushButton { background: #223247; color: #e8edf4; border: 1px solid #41536c; border-radius: 6px; padding: 7px; }
-            QPushButton:disabled { background: #325c8d; color: #ffffff; }
-            QTabBar::tab { background: #1b293b; color: #c6d3e6; padding: 8px 12px; margin-right: 2px; }
-            QTabBar::tab:selected { background: #325c8d; color: #ffffff; }
-            QTableWidget { background: #172334; alternate-background-color: #202e41; color: #e8edf4; gridline-color: #34445a; }
-            QHeaderView::section { background: #223247; color: #e8edf4; padding: 8px; }
-        ''')
+        theme.style(self, DIALOG_STYLE)
         self.info = detail['info']
         self.players = sorted(self.info['participants'], key=lambda p: p.get('teamId', 0))
         layout = QVBoxLayout(self)

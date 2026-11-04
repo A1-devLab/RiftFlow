@@ -3,6 +3,7 @@ from datetime import datetime
 
 from ui.portraits import ChampionPortraits
 from ui.match_assets import MatchAssets
+from ui.theme import theme
 
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtWidgets import (
@@ -58,7 +59,7 @@ class OutGamePage(QWidget):
         self.assets = assets or MatchAssets(self)
         self.setObjectName("outGame")
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setStyleSheet(STYLE)
+        theme.style(self, STYLE)
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(18)
@@ -74,7 +75,7 @@ class OutGamePage(QWidget):
         self.history_stack = QStackedWidget()
         loading = QFrame(objectName="loadingPanel")
         loading_box = QVBoxLayout(loading)
-        self.loading_label = QLabel("Loading .", objectName="loadingText")
+        self.loading_label = QLabel("전적을 불러오는 중 .", objectName="loadingText")
         self.loading_label.setAlignment(Qt.AlignCenter)
         loading_box.addWidget(self.loading_label)
         self.history_stack.addWidget(loading)
@@ -89,7 +90,7 @@ class OutGamePage(QWidget):
 
     def _animate_loading(self):
         self.loading_step = self.loading_step % 3 + 1
-        self.loading_label.setText("Loading " + "." * self.loading_step)
+        self.loading_label.setText("전적을 불러오는 중 " + "." * self.loading_step)
 
     def _profile_card(self):
         card = QFrame(objectName="lightCard")
@@ -107,6 +108,7 @@ class OutGamePage(QWidget):
         title.addStretch()
         self.refresh_button = QPushButton("클라이언트 확인", objectName="refreshButton")
         self.refresh_button.setMinimumWidth(118)
+        self.refresh_button.setCursor(Qt.PointingHandCursor)
         self.refresh_button.clicked.connect(self.profileRequested.emit)
         title.addWidget(self.refresh_button)
         info.addLayout(title)
@@ -220,13 +222,14 @@ class OutGamePage(QWidget):
         panel = QFrame(objectName="chatPanel")
         box = QVBoxLayout(panel)
         box.setContentsMargins(0, 0, 0, 0)
-        header = QHBoxLayout()
+        head = QFrame(objectName="chatHeader")
+        header = QHBoxLayout(head)
         header.setContentsMargins(18, 14, 18, 14)
         header.addWidget(_label("AI", "aiBadge"))
         header.addWidget(_label("AI에게 질문", "chatTitle"))
         header.addStretch()
-        header.addWidget(_label("RiftFlow", "chatBrand"))
-        box.addLayout(header)
+        header.addWidget(_label("대화는 이 PC에만 저장", "chatBrand"))
+        box.addWidget(head)
         self.chat_scroll = QScrollArea()
         self.chat_scroll.setWidgetResizable(True)
         self.chat_scroll.setFrameShape(QFrame.NoFrame)
@@ -242,11 +245,13 @@ class OutGamePage(QWidget):
         box.addWidget(self.chat_scroll, 1)
         form = QHBoxLayout()
         form.setContentsMargins(14, 12, 14, 14)
-        self.question = QLineEdit()
-        self.question.setPlaceholderText("챗봇에게 물어보기")
+        self.question = QLineEdit(objectName="chatInput")
+        self.question.setPlaceholderText("AI에게 물어보기 (Enter로 보내기)")
         self.question.setMaxLength(1000)
         self.question.returnPressed.connect(self.submit)
         self.send = QPushButton("↑", objectName="chatSend")
+        self.send.setCursor(Qt.PointingHandCursor)
+        self.send.setToolTip("보내기")
         self.send.clicked.connect(self.submit)
         form.addWidget(self.question, 1)
         form.addWidget(self.send)
@@ -376,46 +381,45 @@ class OutGamePage(QWidget):
 
 
 STYLE = """
-QWidget#outGame { font-family: "Malgun Gothic"; font-size: 13px; background: #0c111b; color: #e8edf7; }
-QWidget#outGame QLabel { background: transparent; color: #e8edf7; }
-QFrame#lightCard, QFrame#chatPanel { background: #121b29; border: 1px solid #253247; border-radius: 16px; }
+QWidget#outGame { font-size: 13px; }
+QFrame#lightCard, QFrame#chatPanel { background: @surface; border: 1px solid @border; border-radius: 14px; }
 QFrame#matchesPanel { background: transparent; border: none; }
-QFrame#loadingPanel { background: #05070b; border: 1px solid #1c2534; border-radius: 16px; }
-QLabel#loadingText { color: #92a4c1; font-size: 26px; font-weight: 600; font-family: Consolas; }
-QLabel#avatar { background: #1a2b41; color: #77aaff; border: 1px solid #304d73; border-radius: 18px; font-size: 24px; font-weight: 800; }
-QLabel#playerName { font-size: 23px; font-weight: 800; }
-QLabel#subtle, QLabel#matchAside { color: #8d9cb3; font-size: 12px; }
-QLabel#record { color: #c0cee3; font-size: 15px; }
-QPushButton#refreshButton { background: #1c304b; color: #9bc4ff; border: 1px solid #314e72; border-radius: 9px; padding: 9px 14px; font-weight: 700; }
-QPushButton#refreshButton:hover { background: #264364; }
-QLabel#activeTab { color: #8fa8cb; font-size: 12px; font-weight: 700; padding: 4px 0; }
-QLabel#sectionTitle { font-size: 19px; font-weight: 800; }
-QLabel#sampleBadge { color: #899bb6; background: #182333; border-radius: 8px; padding: 6px 10px; font-size: 11px; }
-QFrame#winCard { background: #111f32; border: 2px solid #397ee8; border-radius: 14px; }
-QFrame#lossCard { background: #26191f; border: 2px solid #d64e61; border-radius: 14px; }
-QFrame#winCard:hover, QFrame#winCard:focus { background: #172d49; border-color: #75adff; }
-QFrame#lossCard:hover, QFrame#lossCard:focus { background: #382129; border-color: #ff8290; }
-QLabel#matchIcon { background: #17263a; color: #9db4d4; border: 1px solid #3a4b63; border-radius: 5px; font-size: 9px; font-weight: 700; }
-QLabel#matchDate { color: #c0cee3; font-size: 13px; font-weight: 700; }
-QLabel#matchTime { color: #8d9cb3; font-size: 12px; }
-QLabel#matchMetric { color: #dce7f6; font-size: 13px; font-weight: 700; }
-QLabel#detailHint { color: #83b4fa; font-size: 11px; }
-QLabel#championPortrait { background: #233449; color: #a7bddb; border: 1px solid #415671; border-radius: 8px; font-size: 18px; font-weight: 700; }
+QFrame#loadingPanel { background: @surface; border: 1px solid @border; border-radius: 14px; }
+QLabel#loadingText { color: @muted; font-size: 18px; font-weight: 600; }
+QLabel#avatar { background: @blue_soft; color: @blue_fg; border: 1px solid @border; border-radius: 18px; font-size: 24px; font-weight: 800; }
+QLabel#playerName { font-size: 22px; font-weight: 800; }
+QLabel#subtle, QLabel#matchAside { color: @muted; font-size: 12px; }
+QLabel#record { color: @text2; font-size: 14px; }
+QPushButton#refreshButton { background: @blue_soft; color: @blue_fg; border: 1px solid transparent; border-radius: 8px; padding: 8px 14px; font-weight: 700; }
+QPushButton#refreshButton:hover { border-color: @blue; }
+QPushButton#refreshButton:disabled { background: @disabled; color: @disabled_fg; }
+QLabel#activeTab { color: @muted; font-size: 11px; font-weight: 700; letter-spacing: 1px; padding: 2px 0; }
+QLabel#sectionTitle { font-size: 17px; font-weight: 800; }
+QLabel#sampleBadge { color: @muted; background: @raised; border-radius: 8px; padding: 5px 10px; font-size: 11px; }
+QFrame#winCard { background: @surface; border: 1px solid @border; border-left: 4px solid @blue; border-radius: 12px; }
+QFrame#lossCard { background: @surface; border: 1px solid @border; border-left: 4px solid @red; border-radius: 12px; }
+QFrame#winCard:hover, QFrame#winCard:focus { background: @blue_soft; border-color: @blue; }
+QFrame#lossCard:hover, QFrame#lossCard:focus { background: @red_soft; border-color: @red; }
+QLabel#matchIcon { background: @inset; color: @muted; border: 1px solid @border; border-radius: 5px; font-size: 9px; font-weight: 700; }
+QLabel#matchDate { color: @text2; font-size: 13px; font-weight: 700; }
+QLabel#matchTime { color: @muted; font-size: 12px; }
+QLabel#matchMetric { color: @text2; font-size: 12px; font-weight: 600; }
+QLabel#detailHint { color: @blue_fg; font-size: 11px; font-weight: 600; }
+QLabel#championPortrait { background: @inset; color: @muted; border: 1px solid @border; border-radius: 10px; font-size: 18px; font-weight: 700; }
 QLabel#champion { font-size: 15px; font-weight: 700; }
-QLabel#winText { color: #79b1ff; font-size: 12px; font-weight: 800; }
-QLabel#lossText { color: #ff8595; font-size: 12px; font-weight: 800; }
-QLabel#kda { font-size: 20px; font-weight: 800; }
-QLabel#matchDetail { font-size: 13px; font-weight: 600; color: #aabbd2; }
+QLabel#winText { color: @blue_fg; font-size: 12px; font-weight: 800; }
+QLabel#lossText { color: @red_fg; font-size: 12px; font-weight: 800; }
+QLabel#kda { font-size: 19px; font-weight: 800; }
+QLabel#matchDetail { font-size: 12px; font-weight: 600; color: @text2; }
 QFrame#chatPanel { min-width: 320px; }
-QLabel#aiBadge { background: #233952; color: #9dc5ff; border-radius: 16px; padding: 8px; font-weight: 800; }
-QLabel#chatTitle, QLabel#chatBrand { font-size: 15px; font-weight: 700; }
-QLabel#userBubble { background: #203551; border: 1px solid #324d70; border-radius: 14px; padding: 12px; color: #e0edff; }
-QLabel#coachBubble { background: #182334; border: 1px solid #2a374c; border-radius: 14px; padding: 12px; color: #b9c8df; }
-QLineEdit { background: #0e1724; color: #e8edf7; border: 1px solid #334661; border-radius: 18px; padding: 12px 16px; }
-QLineEdit:focus { border-color: #568ddb; }
-QPushButton#chatSend { background: #2b5281; color: #dbeaff; border: none; border-radius: 21px; min-width: 42px; min-height: 42px; font-size: 22px; font-weight: 800; padding: 0; }
-QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; border: none; }
-QScrollBar:vertical { background: #101824; width: 8px; margin: 0; }
-QScrollBar::handle:vertical { background: #34465f; border-radius: 4px; min-height: 30px; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QFrame#chatHeader { background: transparent; border: none; border-bottom: 1px solid @border; }
+QLabel#aiBadge { background: @accent_soft; color: @accent_fg; border-radius: 14px; padding: 6px 9px; font-weight: 800; }
+QLabel#chatTitle { font-size: 15px; font-weight: 700; }
+QLabel#chatBrand { color: @muted; font-size: 12px; }
+QLabel#userBubble { background: @blue; border: none; border-radius: 14px; padding: 10px 12px; color: #ffffff; }
+QLabel#coachBubble { background: @raised; border: 1px solid @border; border-radius: 14px; padding: 10px 12px; color: @text; }
+QLineEdit#chatInput { border-radius: 20px; padding: 10px 16px; }
+QPushButton#chatSend { background: @accent; color: @on_accent; border: none; border-radius: 20px; min-width: 40px; min-height: 40px; font-size: 18px; font-weight: 800; padding: 0; }
+QPushButton#chatSend:hover { background: @accent_fg; }
+QPushButton#chatSend:disabled { background: @accent_disabled; color: @on_accent_disabled; }
 """
