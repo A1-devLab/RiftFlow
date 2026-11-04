@@ -6,11 +6,11 @@ from datetime import datetime
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl
+from PySide6.QtCore import QSize, Qt, QThread, Signal, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QMessageBox,
-    QLineEdit, QMainWindow, QPushButton,
+    QLineEdit, QMainWindow, QPushButton, QScrollArea,
     QStackedWidget, QTextBrowser, QVBoxLayout, QWidget,
 )
 
@@ -28,6 +28,8 @@ from knowledge.in_game import item_catalog
 from .pages.out_game import OutGamePage
 from .pages.before_game import BeforeGamePage
 from .pages.in_game import InGamePage
+from .logo import BrandLogo, glyph_icon, logo_icon
+from .theme import MODE_NAMES, MODES, theme
 from .match_assets import MatchAssets
 from .portraits import ChampionPortraits
 from .match_detail import MatchDetailDialog
@@ -35,29 +37,48 @@ from .services import ask_general, create_demo, profile_context, sync_database
 from .chat_history import SCREEN_NAMES, ChatHistory
 from knowledge.before_game import recent_rune_pages
 
+# 앱 전체에 쓰는 기본 모양. 색은 '@토큰'으로 쓰고 theme이 다크·라이트 값으로 바꿔 넣는다.
+# 화면별 스타일시트에는 그 화면에만 있는 부품만 둔다.
 STYLE = """
-QWidget { background: #101722; color: #e8edf4; font-family: 'Arial'; font-size: 14px; }
-QMainWindow { background: #101722; }
-QFrame#sidebar { background: #0b111b; border-right: 1px solid #233043; }
-QLabel#brand { color: #5de3c0; font-size: 26px; font-weight: bold; }
-QLabel#heading { font-size: 28px; font-weight: bold; }
-QLabel#muted { color: #97a8bd; }
-QLabel#badge { background: #173a38; color: #72e2c7; border-radius: 8px; padding: 9px; }
-QFrame#card { background: #182333; border: 1px solid #29394c; border-radius: 12px; }
-QFrame#card QLabel { background: transparent; }
-QLabel#metric { color: #6fe7c8; font-size: 30px; font-weight: bold; }
-QPushButton { background: #223247; border: 1px solid #34475e; border-radius: 7px; padding: 11px 16px; }
-QPushButton:hover { background: #2f4660; }
-QPushButton:disabled { color: #64758a; background: #18212e; }
-QPushButton#primary { background: #56d7b6; color: #09291f; border: none; font-weight: bold; }
-QPushButton#nav { text-align: left; background: transparent; border: none; padding: 14px; }
-QPushButton#nav:checked { background: #1b3439; color: #72e2c7; }
-QComboBox, QLineEdit { background: #172334; border: 1px solid #354860; border-radius: 7px; padding: 10px; }
-QListWidget, QTextBrowser { background: #151f2e; border: 1px solid #2a3a4f; border-radius: 9px; padding: 12px; }
-QListWidget::item { padding: 12px; border-bottom: 1px solid #263449; }
-QListWidget::item:selected { background: #234842; color: #a2f1dd; }
+QWidget { color: @text; font-size: 14px; }
+QMainWindow, QDialog, QMessageBox { background: @bg; }
+QLabel { background: transparent; }
+QToolTip { background: @surface; color: @text; border: 1px solid @border_strong; border-radius: 6px; padding: 6px 8px; }
+QFrame#sidebar { background: @sidebar; border: none; border-right: 1px solid @border; }
+QLabel#heading { font-size: 24px; font-weight: 700; }
+QLabel#sectionHeading { font-size: 16px; font-weight: 700; }
+QLabel#muted { color: @muted; font-size: 13px; }
+QLabel#statusLine { color: @muted; font-size: 12px; padding: 6px 2px 0 2px; }
+QLabel#badge { background: @accent_soft; color: @accent_fg; border-radius: 8px; padding: 9px 12px; font-weight: 600; }
+QFrame#card, QFrame#settingsCard { background: @surface; border: 1px solid @border; border-radius: 12px; }
+QPushButton { background: @button; color: @text; border: 1px solid @button_border; border-radius: 8px; padding: 9px 14px; font-weight: 600; }
+QPushButton:hover { background: @button_hover; border-color: @border_strong; }
+QPushButton:pressed { background: @raised; }
+QPushButton:focus { border-color: @accent; }
+QPushButton:disabled { color: @disabled_fg; background: @disabled; border-color: @border; }
+QPushButton#primary { background: @accent; color: @on_accent; border: 1px solid @accent; font-weight: 700; }
+QPushButton#primary:hover { background: @accent_fg; border-color: @accent_fg; }
+QPushButton#primary:disabled { background: @accent_disabled; color: @on_accent_disabled; border-color: @accent_disabled; }
+QPushButton#nav { text-align: left; background: transparent; color: @text2; border: none; border-radius: 8px; padding: 11px 12px; font-weight: 600; }
+QPushButton#nav:hover { background: @raised; color: @text; }
+QPushButton#nav:checked { background: @accent_soft; color: @accent_fg; font-weight: 700; }
+QPushButton#nav:focus { border: none; }
+QComboBox, QLineEdit { background: @surface; color: @text; border: 1px solid @button_border; border-radius: 8px; padding: 9px 11px; selection-background-color: @selection; selection-color: @text; }
+QComboBox:hover, QLineEdit:hover { border-color: @border_strong; }
+QComboBox:focus, QLineEdit:focus { border-color: @accent; }
+QComboBox:disabled, QLineEdit:disabled { color: @disabled_fg; background: @disabled; }
+QComboBox::drop-down { border: none; width: 26px; }
+QComboBox QAbstractItemView { background: @surface; color: @text; border: 1px solid @border_strong; selection-background-color: @selection; selection-color: @text; outline: none; padding: 4px; }
+QTextBrowser { background: @surface; color: @text; border: 1px solid @border; border-radius: 10px; padding: 12px; selection-background-color: @selection; selection-color: @text; }
+QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; border: none; }
+QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
+QScrollBar:horizontal { background: transparent; height: 10px; margin: 2px; }
+QScrollBar::handle:vertical { background: @scroll; border-radius: 3px; min-height: 32px; }
+QScrollBar::handle:horizontal { background: @scroll; border-radius: 3px; min-width: 32px; }
+QScrollBar::handle:hover { background: @scroll_hover; }
+QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
+QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
 QCheckBox { spacing: 8px; }
-QSplitter::handle { background: #101722; width: 12px; }
 """
 LEGAL = ("RiftFlow isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games "
          "or anyone officially involved in producing or managing Riot Games properties. Riot Games, "
@@ -85,6 +106,10 @@ def open_link(url):
 
 
 HOME, PICK, INGAME, CHAT, SETTINGS = range(5)
+# 사이드바 아이콘 (Segoe Fluent Icons / MDL2 글리프): 기록, 사람들, 게임 패드, 대화, 설정
+NAV_GLYPHS = ('\ue81c', '\ue716', '\ue7fc', '\ue8bd', '\ue713')
+NAV_TIPS = ('최근 전적과 AI 채팅', '챔피언 선택 중 픽, 밴, 추천 룬', '게임 중 스코어보드와 추천 아이템',
+            '롤에 대해 자유롭게 질문', '자료 업데이트, 연결 상태, 화면 테마')
 RETRY_HINT = " 문제를 해결한 뒤 '클라이언트에 적용'을 누르면 다시 적용합니다."
 # 픽창이 끝나고 게임 화면이 뜨기 전(로딩 화면)에는 Live Client가 아직 열려 있지 않다.
 # 이때 대기로 보면 전적 화면으로 튕겼다가 다시 인게임으로 넘어가므로 로딩으로 따로 구분한다.
@@ -166,38 +191,46 @@ class Window(QMainWindow):
         self.rune_applied_page = None  # 마지막으로 클라이언트에 적용한 추천 페이지 (같은 페이지를 반복 적용하지 않음)
         self.pending_rune_apply = None  # 추천 작업이 끝나면 자동 적용할 페이지
         self.closing = False
-        self.setWindowTitle('RiftFlow · Desktop MVP')
+        self.setWindowTitle('RiftFlow')
+        self.setWindowIcon(logo_icon())
         self.resize(1580, 880)
         self.setMinimumSize(1180, 720)
         root = QWidget()
         row = QHBoxLayout(root)
         row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
         side = QFrame()
         side.setObjectName('sidebar')
-        side.setFixedWidth(216)
+        side.setFixedWidth(220)
         nav = QVBoxLayout(side)
-        nav.setContentsMargins(22, 30, 22, 20)
-        nav.addWidget(label('RiftFlow', 'brand'))
-        nav.addSpacing(32)
+        nav.setContentsMargins(16, 26, 16, 18)
+        nav.setSpacing(4)
+        brand = BrandLogo()
+        nav.addWidget(brand)
+        nav.addSpacing(28)
         self.stack = QStackedWidget()
         self.nav_buttons = []
         for i, name in enumerate(('전적', '픽창', '인게임', 'AI에게 질문', '설정 및 데이터')):
             button = QPushButton(name)
             button.setObjectName('nav')
             button.setCheckable(True)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setIconSize(QSize(18, 18))
+            button.setToolTip(NAV_TIPS[i])
             button.clicked.connect(lambda checked=False, index=i: self.navigate(index))
             nav.addWidget(button)
             self.nav_buttons.append(button)
+        self.paint_nav_icons()
+        theme.changed.connect(self.paint_nav_icons)
         nav.addStretch()
-        nav.addWidget(label('TEAM PROTOTYPE\nv0.2 · 비공개 개발용', 'muted'))
         row.addWidget(side)
         body = QVBoxLayout()
-        body.setContentsMargins(28, 25, 28, 20)
+        body.setContentsMargins(28, 24, 28, 14)
         self.mode = QComboBox()
         self.mode.addItems(['예시 자료 · 오프라인', '수집한 자료 · 로컬 DB'])
         self.mode.currentIndexChanged.connect(self.reload)
         body.addWidget(self.stack, 1)
-        self.status = label('키 없이 예시 자료를 둘러볼 수 있습니다.', 'muted')
+        self.status = label('키 없이 예시 자료를 둘러볼 수 있습니다.', 'statusLine')
         body.addWidget(self.status)
         row.addLayout(body, 1)
         self.setCentralWidget(root)
@@ -206,6 +239,7 @@ class Window(QMainWindow):
         self.make_in_game()
         self.make_chat()
         self.make_settings()
+        theme.changed.connect(lambda: self.render_general(*self.general_view))
         self.navigate(HOME)
         self.refresh_chat_list()
         self.render_general()
@@ -237,15 +271,33 @@ class Window(QMainWindow):
             # 예전에는 이 문장을 숨겨진 로딩 화면 뒤에 써서 'Loading …'만 끝없이 보였다.
             self.out_game.show_unavailable('Riot API 키를 설정하면 롤 클라이언트 로그인을 자동 감지합니다.')
 
+    def paint_nav_icons(self):
+        for button, glyph in zip(self.nav_buttons, NAV_GLYPHS):
+            button.setIcon(glyph_icon(glyph, theme.color('text2'), theme.color('accent_fg')))
+
     def page(self, title, subtitle):
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.setContentsMargins(0, 8, 0, 8)
-        layout.setSpacing(16)
+        layout.setContentsMargins(0, 4, 0, 8)
+        layout.setSpacing(14)
         layout.addWidget(label(title, 'heading'))
         layout.addWidget(label(subtitle, 'muted'))
+        layout.addSpacing(4)
         self.stack.addWidget(widget)
         return layout
+
+    @staticmethod
+    def card(parent_layout, title, description=None):
+        """설정 화면의 묶음 상자 하나. 안쪽 레이아웃을 돌려준다."""
+        frame = QFrame(objectName='settingsCard')
+        box = QVBoxLayout(frame)
+        box.setContentsMargins(20, 16, 20, 18)
+        box.setSpacing(10)
+        box.addWidget(label(title, 'sectionHeading'))
+        if description:
+            box.addWidget(label(description, 'muted'))
+        parent_layout.addWidget(frame)
+        return box
 
     def make_home(self):
         self.out_game = OutGamePage(assets=self.assets, portraits=self.portraits)
@@ -628,26 +680,60 @@ class Window(QMainWindow):
         layout.addLayout(form)
 
     def make_settings(self):
-        layout = self.page('설정 및 데이터', 'API 연결 상태와 공식 게임 자료 업데이트를 관리합니다.')
-        layout.addWidget(label('AI가 참고할 자료', 'heading'))
-        layout.addWidget(self.mode)
-        layout.addWidget(label('AI는 일반 지식과 연결된 전적을 활용하고, 선택한 자료도 보조로 참고합니다. 예시 자료는 과거 버전의 소량 데이터입니다. 실제 사용 시 공식 자료를 업데이트하세요.', 'muted'))
+        page = self.page('설정 및 데이터', 'API 연결 상태, 공식 게임 자료 업데이트, 화면 테마를 관리합니다.')
+        # 설정이 늘어나도 창이 작을 때 잘리지 않게 스크롤 안에 묶음 상자를 쌓는다.
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 8, 0)
+        layout.setSpacing(14)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidget(content)
+        page.addWidget(scroll, 1)
+
+        box = self.card(layout, '연결 상태')
         self.connection = label('', 'badge')
-        layout.addWidget(self.connection)
-        self.model = QLineEdit(llm.default_model())
-        self.model.setPlaceholderText('Google AI Studio에서 사용 가능한 Gemini 모델 ID')
-        layout.addWidget(self.model)
+        box.addWidget(self.connection)
+
+        box = self.card(layout, 'AI가 참고할 자료',
+                        'AI는 일반 지식과 연결된 전적을 활용하고, 선택한 자료도 보조로 참고합니다. '
+                        '예시 자료는 과거 버전의 소량 데이터이니 실제로 쓸 때는 공식 자료를 업데이트하세요.')
+        box.addWidget(self.mode)
+        row = QHBoxLayout()
         self.sync = QPushButton('공식 게임 자료 수집 / 업데이트')
         self.sync.setObjectName('primary')
         self.sync.clicked.connect(self.sync_data)
-        layout.addWidget(self.sync)
-        layout.addWidget(label('Data Dragon과 최근 패치 노트 3개를 로컬 DB에 저장합니다. 라이엇 키는 필요하지 않습니다. 자동 예약 업데이트는 아닙니다.', 'muted'))
+        row.addWidget(self.sync)
+        row.addStretch()
+        box.addLayout(row)
+        box.addWidget(label('Data Dragon과 최근 패치 노트 3개를 로컬 DB에 저장합니다. '
+                            '라이엇 키는 필요하지 않고, 자동 예약 업데이트는 아닙니다.', 'muted'))
+
+        box = self.card(layout, '화면', '다크 모드와 라이트 모드는 기본으로 윈도우 설정을 따릅니다.')
+        self.theme_mode = QComboBox()
+        for mode in MODES:
+            self.theme_mode.addItem(MODE_NAMES[mode], mode)
+        self.theme_mode.setCurrentIndex(MODES.index(theme.mode))
+        self.theme_mode.currentIndexChanged.connect(lambda index: theme.set_mode(self.theme_mode.itemData(index)))
+        self.theme_mode.setMaximumWidth(320)
+        box.addWidget(self.theme_mode)
+
+        box = self.card(layout, '고급', 'AI 모델 ID를 비워 두면 기본 모델을 씁니다. '
+                                      'API 키는 .env에서 관리하고, 실제 키는 채팅이나 GitHub에 올리지 마세요.')
+        self.model = QLineEdit(llm.default_model())
+        self.model.setPlaceholderText('AI 모델 ID (비워 두면 기본 모델)')
+        box.addWidget(self.model)
+        row = QHBoxLayout()
         portal = QPushButton('라이엇 개발자 포털 열기')
         portal.clicked.connect(lambda: open_link(QUrl('https://developer.riotgames.com/')))
-        layout.addWidget(portal)
-        layout.addWidget(label('Riot API 키와 Gemini API 키는 .env에서 관리합니다. 실제 키는 채팅이나 GitHub에 올리지 마세요.\n\n라이엇 신청 기록: docs/riot-application.md', 'muted'))
+        row.addWidget(portal)
+        row.addStretch()
+        box.addLayout(row)
         layout.addStretch()
-        layout.addWidget(label(LEGAL, 'muted'))
+        legal = label(LEGAL, 'muted')
+        legal.setStyleSheet('font-size: 11px;')
+        layout.addWidget(legal)
 
     @staticmethod
     def server():
@@ -833,14 +919,22 @@ class Window(QMainWindow):
         conversation_id = conversation_id or self.chat_ids.get('general')
         messages = self.chats.messages(conversation_id) if conversation_id else []
         blocks = []
+        self.general_view = (pending, conversation_id)      # 테마가 바뀌면 같은 내용을 새 색으로 다시 그린다
+        tokens = theme.tokens
         for message in messages + ([{'role': 'user', 'text': pending}] if pending else []):
-            who, color = ('나', '#9dc5ff') if message['role'] == 'user' else ('AI', '#72e2c7')
-            blocks.append('<p style="margin-top:14px"><b style="color:%s">%s</b></p><p style="white-space:pre-wrap">%s</p>'
-                          % (color, who, esc(message['text'])))
+            # QTextBrowser는 둥근 모서리를 못 그려서 배경색 표로 말풍선을 만든다.
+            user = message['role'] == 'user'
+            who, color, fill = (('나', tokens['blue_fg'], tokens['blue_soft']) if user
+                                else ('AI', tokens['accent_fg'], tokens['raised']))
+            blocks.append('<table width="100%%" cellpadding="12" cellspacing="0" style="margin-bottom:10px">'
+                          '<tr><td style="background-color:%s"><b style="color:%s">%s</b><br>'
+                          '<span style="white-space:pre-wrap">%s</span></td></tr></table>'
+                          % (fill, color, who, esc(message['text'])))
+        muted = tokens['muted']
         if pending:
-            blocks.append('<p style="color:#97a8bd">AI 답변을 준비하고 있습니다… 최대 약 60초 걸릴 수 있습니다.</p>')
-        self.reply.setHtml(''.join(blocks) or '<p style="color:#97a8bd">아직 대화가 없습니다. 아래에 질문을 입력하세요. '
-                                              '대화는 이 PC에만 저장되고, 이어지는 질문은 앞 대화를 기억해서 답합니다.</p>')
+            blocks.append('<p style="color:%s">AI 답변을 준비하고 있습니다… 최대 약 60초 걸릴 수 있습니다.</p>' % muted)
+        self.reply.setHtml(''.join(blocks) or '<p style="color:%s">아직 대화가 없습니다. 아래에 질문을 입력하세요. '
+                                              '대화는 이 PC에만 저장되고, 이어지는 질문은 앞 대화를 기억해서 답합니다.</p>' % muted)
         bar = self.reply.verticalScrollBar()
         bar.setValue(bar.maximum())
 
@@ -952,7 +1046,11 @@ def main():
     os.environ.setdefault('RIFTFLOW_DEVICE_TOKEN_PATH', str(Path(args.data_dir) / 'device_token'))
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setStyle('Fusion')
-    app.setStyleSheet(STYLE)
+    font = app.font()
+    font.setFamilies(['Segoe UI', 'Malgun Gothic'])     # 영문은 Segoe UI, 한글은 맑은 고딕
+    app.setFont(font)
+    app.setPalette(theme.palette())
+    theme.style(app, STYLE)
     window = Window(args.data_dir, auto_sync=getattr(sys, 'frozen', False) and not args.screenshot)
     window.show()
     if args.screenshot:

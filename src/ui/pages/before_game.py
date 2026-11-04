@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
 
 from ui.match_assets import MatchAssets
 from ui.portraits import ChampionPortraits
+from ui.theme import theme
 
 
 def label(text, name=None):
@@ -181,7 +182,7 @@ class BeforeGamePage(QWidget):
     def __init__(self, assets=None, portraits=None, parent=None):
         super().__init__(parent)
         self.setObjectName('beforeGame')
-        self.setStyleSheet(STYLE)
+        theme.style(self, STYLE)
         self.auto_champion = ''
         self.auto_opponent = ''
         self.view = {'mine': None, 'allies': [], 'enemies': [], 'ally_bans': [], 'enemy_bans': []}
@@ -200,17 +201,21 @@ class BeforeGamePage(QWidget):
         self.refresh.clicked.connect(self.refreshRequested.emit)
         header.addWidget(self.refresh)
         root.addLayout(header)
-        self.state = label('픽창을 기다리고 있습니다. 롤 클라이언트에서 챔피언 선택을 시작하세요.', 'subtle')
+        self.state = label('픽창을 기다리고 있습니다. 롤 클라이언트에서 챔피언 선택을 시작하세요.', 'stateChip')
         root.addWidget(self.state)
         teams = QGridLayout()
         teams.setSpacing(12)
         self.ally = TeamList(self.portraits, '아군 선택 전')
         self.enemy = TeamList(self.portraits, '상대 선택 전')
         self.bans = label('확정된 밴 없음', 'teamText')
-        for col, (title, body) in enumerate((('아군 픽', self.ally), ('상대 픽', self.enemy), ('확정된 밴', self.bans))):
+        for col, (title, body, side) in enumerate((('아군 픽', self.ally, 'ally'), ('상대 픽', self.enemy, 'enemy'),
+                                                   ('확정된 밴', self.bans, ''))):
             card = QFrame(objectName='panel')
             box = QVBoxLayout(card)
-            box.addWidget(label(title, 'cardTitle'))
+            box.setContentsMargins(14, 12, 14, 12)
+            heading = label(title, 'cardTitle')
+            heading.setProperty('side', side)
+            box.addWidget(heading)
             box.addWidget(body)
             box.addStretch()
             teams.addWidget(card, 0, col)
@@ -268,6 +273,7 @@ class BeforeGamePage(QWidget):
         self.view = view
         mode = ' · %s' % view['mode_name'] if view.get('mode_name') else ''
         self.state.setText('픽창 연결됨%s · 상대는 확정된 픽만 보입니다.' % mode)
+        self._set_live(True)
         self.ally.show_team(view['allies'])
         self.enemy.show_team(view['enemies'])
         self.bans.setText('아군: ' + (', '.join(view['ally_bans']) or '없음') + '\n상대: ' + (', '.join(view['enemy_bans']) or '없음'))
@@ -288,8 +294,15 @@ class BeforeGamePage(QWidget):
             self.opponent.clear()
             self.auto_opponent = ''
 
+    def _set_live(self, live):
+        if self.state.property('live') != live:
+            self.state.setProperty('live', live)
+            self.state.style().unpolish(self.state)
+            self.state.style().polish(self.state)
+
     def show_disconnected(self):
         self.state.setText('픽창을 기다리고 있습니다. 롤 클라이언트에서 챔피언 선택을 시작하세요.')
+        self._set_live(False)
         self.view = {'mine': None, 'allies': [], 'enemies': [], 'ally_bans': [], 'enemy_bans': []}
         self.ally.show_team([])
         self.enemy.show_team([])
@@ -377,26 +390,25 @@ class BeforeGamePage(QWidget):
 
 
 STYLE = """
-QWidget#beforeGame { background: #101722; color: #e8edf4; }
-QLabel#title { color: #edf4ff; font-size: 27px; font-weight: 700; }
-QLabel#subtle { color: #94a8c2; }
+QLabel#title { font-size: 24px; font-weight: 700; }
+QLabel#subtle { color: @muted; font-size: 13px; }
+QLabel#stateChip { background: @raised; color: @text2; border-radius: 8px; padding: 7px 12px; font-size: 13px; }
+QLabel#stateChip[live="true"] { background: @accent_soft; color: @accent_fg; font-weight: 600; }
 QFrame#panel QLabel, QFrame#panel QWidget { background: transparent; }
-QFrame#panel { background: #182536; border: 1px solid #31445e; border-radius: 12px; min-height: 128px; }
-QLabel#cardTitle { color: #7dc9e9; font-size: 16px; font-weight: 700; }
-QLabel#teamText { color: #dce9f7; font-size: 14px; }
-QTextBrowser { background: #151f2e; color: #e8edf4; border: 1px solid #31445e; border-radius: 10px; padding: 12px; }
-QLineEdit, QComboBox { background: #172334; color: #e8edf4; border: 1px solid #354860; border-radius: 7px; padding: 9px; }
-QPushButton { background: #223247; color: #e8edf4; border: 1px solid #34475e; border-radius: 7px; padding: 9px 13px; }
-QPushButton#primary { background: #56d7b6; color: #09291f; border: none; font-weight: 700; }
-QPushButton:disabled, QPushButton#primary:disabled { background: #2c5a50; color: #88a89f; }
-QFrame#runePanel { background: #182536; border: 1px solid #31445e; border-radius: 12px; }
+QFrame#panel { background: @surface; border: 1px solid @border; border-radius: 12px; min-height: 128px; }
+QLabel#cardTitle { color: @text; font-size: 15px; font-weight: 700; }
+QLabel#cardTitle[side="ally"] { color: @blue_fg; }
+QLabel#cardTitle[side="enemy"] { color: @red_fg; }
+QLabel#teamText { color: @text2; font-size: 13px; }
+QPushButton:disabled { color: @disabled_fg; background: @disabled; }
+QFrame#runePanel { background: @surface; border: 1px solid @border; border-radius: 12px; }
 QFrame#runePanel QLabel, QFrame#runePanel QWidget { background: transparent; }
-QLabel#runeIcon { background: #0e1724; border: 1px solid #2e3f56; }
-QLabel#runeName { color: #c0cee3; font-size: 11px; }
-QLabel#runeTree { color: #7dc9e9; font-size: 13px; font-weight: 700; }
-QLabel#pickPortrait { background: #0e1724; color: #6f829c; border: 1px solid #2e3f56; border-radius: 6px; font-size: 11px; }
-QLabel#applyOk { color: #72e2c7; }
-QLabel#applyWarn { color: #ffb86b; font-weight: 700; }
-QPushButton#attention { background: #f0a14a; color: #2b1a05; border: none; font-weight: 700; }
-QLabel#shardChip { background: #0e1724; color: #dce9f7; border: 1px solid #2e3f56; border-radius: 6px; padding: 4px 8px; font-size: 12px; }
+QLabel#runeIcon { background: @inset; border: 1px solid @border; }
+QLabel#runeName { color: @text2; font-size: 11px; }
+QLabel#runeTree { color: @accent_fg; font-size: 13px; font-weight: 700; }
+QLabel#pickPortrait { background: @inset; color: @muted; border: 1px solid @border; border-radius: 6px; font-size: 11px; }
+QLabel#applyOk { color: @accent_fg; font-weight: 600; }
+QLabel#applyWarn { color: @warn_fg; font-weight: 700; }
+QPushButton#attention { background: @warn; color: @on_warn; border: 1px solid @warn; font-weight: 700; }
+QLabel#shardChip { background: @inset; color: @text2; border: 1px solid @border; border-radius: 6px; padding: 4px 8px; font-size: 12px; }
 """
