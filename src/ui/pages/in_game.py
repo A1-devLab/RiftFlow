@@ -2,10 +2,11 @@
 from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy,
-    QTextBrowser, QVBoxLayout, QWidget,
+    QComboBox, QCompleter, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy,
+    QStackedWidget, QTextBrowser, QVBoxLayout, QWidget,
 )
 
+from game_phases.in_game.augments import MAX_OFFERED, MIN_OFFERED, NOT_WIN_RATE
 from game_phases.in_game.desktop import RECOMMEND_QUESTION
 from ui.match_assets import MatchAssets
 from ui.portraits import ChampionPortraits
@@ -260,6 +261,174 @@ class ItemCard(QFrame):
         self.button.setText('다시 추천')
 
 
+class PercentBar(QWidget):
+    """증강 추천도 막대. 승률이 아니라 AI가 나눈 비율이라 숫자는 옆에 함께 쓴다."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.value = 0
+        self.setFixedHeight(8)
+
+    def set_value(self, value):
+        self.value = max(0, min(100, value))
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = QRectF(self.rect())
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(theme.color('track'))
+        painter.drawRoundedRect(rect, 4, 4)
+        if self.value:
+            painter.setBrush(theme.color('accent'))
+            painter.drawRoundedRect(QRectF(rect.x(), rect.y(), rect.width() * self.value / 100, rect.height()), 4, 4)
+        painter.end()
+
+
+class AugmentPick(QFrame):
+    """추천도 한 줄: 증강 이름, 등급, 비율 막대, 짧은 이유."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName('itemPick')
+        box = QVBoxLayout(self)
+        box.setContentsMargins(10, 7, 10, 7)
+        box.setSpacing(4)
+        head = QHBoxLayout()
+        self.name = label('', 'pickName')
+        self.name.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.rarity = label('', 'augRarity')
+        self.percent = label('', 'augPercent')
+        head.addWidget(self.name, 1)
+        head.addWidget(self.rarity)
+        head.addWidget(self.percent)
+        box.addLayout(head)
+        self.bar = PercentBar()
+        box.addWidget(self.bar)
+        self.reason = label('', 'pickReason')
+        self.reason.setWordWrap(True)
+        box.addWidget(self.reason)
+        self.show_option(None)
+
+    def show_option(self, option):
+        self.setVisible(option is not None)
+        if option is None:
+            return
+        self.name.setText(option['name'])
+        self.name.setToolTip(option['name'])
+        self.rarity.setText(option.get('rarity') or '')
+        self.rarity.setProperty('rarity', option.get('rarity') or '')
+        self.rarity.style().unpolish(self.rarity)
+        self.rarity.style().polish(self.rarity)
+        self.percent.setText('%d%%' % option['percent'])
+        self.bar.set_value(option['percent'])
+        self.reason.setText(option.get('reason') or '')
+
+
+class AugmentCard(QFrame):
+    """증바람 증강 추천도 칸. 받은 증강을 사용자가 고르면(게임은 제시된 증강을 알려 주지 않음) AI가 비율을 나눈다."""
+    requested = Signal(list)
+    catalogRequested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName('itemCard')
+        self.catalog = {}
+        box = QVBoxLayout(self)
+        box.setContentsMargins(12, 10, 12, 10)
+        box.setSpacing(6)
+        head = QHBoxLayout()
+        head.addWidget(label('증강 추천도', 'panelTitle'))
+        head.addStretch()
+        self.button = QPushButton('추천도 보기')
+        self.button.setObjectName('primary')
+        self.button.clicked.connect(self.request)
+        head.addWidget(self.button)
+        box.addLayout(head)
+        self.caption = label('', 'subtle')
+        self.caption.setWordWrap(True)
+        box.addWidget(self.caption)
+        self.choices = []
+        for index in range(MAX_OFFERED):
+            combo = QComboBox()
+            combo.setEditable(True)
+            combo.setInsertPolicy(QComboBox.NoInsert)
+            combo.lineEdit().setPlaceholderText('증강 %d 검색 (이름 일부만 입력해도 됨)' % (index + 1))
+            box.addWidget(combo)
+            self.choices.append(combo)
+        self.picks = [AugmentPick() for _ in range(MAX_OFFERED)]
+        for pick in self.picks:
+            box.addWidget(pick)
+        self.basis = label(NOT_WIN_RATE, 'subtle')
+        self.basis.setWordWrap(True)
+        box.addWidget(self.basis)
+        self.clear()
+
+    def set_catalog(self, augments):
+        """증강 목록(이름, 등급, 공식 효과)을 검색 상자에 채운다. 고르던 이름은 그대로 둔다."""
+        self.catalog = {a['name']: a for a in augments or [] if a.get('name') and isinstance(a.get('id'), int)}
+        names = sorted(self.catalog)
+        for combo in self.choices:
+            typed = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear()
+            for name in names:
+                augment = self.catalog[name]
+                combo.addItem(name, augment['id'])
+                tip = ', '.join(x for x in (augment.get('rarity'), augment.get('description')) if x)
+                combo.setItemData(combo.count() - 1, tip, Qt.ToolTipRole)
+            completer = QCompleter(names, combo)
+            completer.setFilterMode(Qt.MatchContains)
+            completer.setCaseSensitivity(Qt.CaseInsensitive)
+            combo.setCompleter(completer)
+            combo.setEditText(typed)
+            combo.blockSignals(False)
+        if not self.catalog:
+            self.caption.setText('증강 목록을 받지 못했습니다. 잠시 뒤 추천도 보기를 다시 눌러 주세요.')
+
+    def selected_ids(self):
+        ids = []
+        for combo in self.choices:
+            augment = self.catalog.get(combo.currentText().strip())
+            if augment and augment['id'] not in ids:
+                ids.append(augment['id'])
+        return ids
+
+    def request(self):
+        if not self.catalog:
+            self.caption.setText('증강 목록을 불러오고 있습니다. 잠시 뒤 다시 눌러 주세요.')
+            self.catalogRequested.emit()
+            return
+        ids = self.selected_ids()
+        if len(ids) < MIN_OFFERED:
+            self.caption.setText('게임에서 받은 증강을 %d개 이상 목록에서 골라 주세요.' % MIN_OFFERED)
+            return
+        self.requested.emit(ids)
+
+    def show_result(self, result):
+        options = result.get('options') or []
+        if not options:
+            self.caption.setText(result.get('message') or '추천도를 만들지 못했습니다.')
+            return
+        for index, pick in enumerate(self.picks):
+            pick.show_option(options[index] if index < len(options) else None)
+        self.caption.setText(result.get('summary') or '')
+
+    def clear(self, reset_choices=False):
+        self.caption.setText('증강 선택 화면에서 받은 증강을 고르면 AI가 지금 조합에 맞춰 추천도를 나눠 줍니다.')
+        for pick in self.picks:
+            pick.show_option(None)
+        if reset_choices:
+            for combo in self.choices:
+                combo.setEditText('')
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self.catalog:
+            self.catalogRequested.emit()
+
+
 class TeamPanel(QFrame):
     def __init__(self, title, portraits, assets, side='', parent=None):
         super().__init__(parent)
@@ -289,6 +458,8 @@ class TeamPanel(QFrame):
 class InGamePage(QWidget):
     askRequested = Signal(object)
     refreshRequested = Signal()
+    augmentRequested = Signal(object)       # {'augment_ids': [...], 'view': 현재 스코어보드}
+    augmentCatalogRequested = Signal()
 
     def __init__(self, assets=None, portraits=None, parent=None):
         super().__init__(parent)
@@ -341,7 +512,28 @@ class InGamePage(QWidget):
         self.items = ItemCard(self.assets)
         self.items.requested.connect(lambda: self._emit(RECOMMEND_QUESTION))
         self.recommend = self.items.button
-        column.addWidget(self.items)
+        self.augments = AugmentCard()
+        self.augments.requested.connect(lambda ids: self.augmentRequested.emit({'augment_ids': ids, 'view': self.view}))
+        self.augments.catalogRequested.connect(self.augmentCatalogRequested.emit)
+        # 아이템 추천과 증강 추천도를 탭으로 나눈다. 둘 다 펼치면 AI 질문 칸이 너무 작아진다.
+        tabs = QHBoxLayout()
+        tabs.setSpacing(4)
+        self.tab_buttons = []
+        for index, name in enumerate(('추천 아이템', '증강 추천도')):
+            button = QPushButton(name, objectName='tab')
+            button.setCheckable(True)
+            button.setCursor(Qt.PointingHandCursor)
+            button.clicked.connect(lambda checked=False, i=index: self.show_tab(i))
+            tabs.addWidget(button)
+            self.tab_buttons.append(button)
+        tabs.addStretch()
+        column.addLayout(tabs)
+        self.side_stack = QStackedWidget()
+        self.side_stack.addWidget(self.items)
+        self.side_stack.addWidget(self.augments)
+        column.addWidget(self.side_stack)
+        self.augment_tab_shown = False      # 증바람 게임에 들어가면 한 번만 증강 탭으로 넘긴다
+        self.show_tab(0)
         coach = QFrame(objectName='coachPanel')
         right = QVBoxLayout(coach)
         right.setContentsMargins(14, 12, 14, 12)
@@ -386,6 +578,14 @@ class InGamePage(QWidget):
             self.gold_text.setText('팀 골드 추정치를 계산하지 못했습니다.')
         self.ally.show_team(view.get('allies') or [], gold['ally'] if gold else None)
         self.enemy.show_team(view.get('enemies') or [], gold['enemy'] if gold else None)
+        if view.get('game_mode') == 'KIWI' and not self.augment_tab_shown:
+            self.augment_tab_shown = True
+            self.show_tab(1)
+
+    def show_tab(self, index):
+        self.side_stack.setCurrentIndex(index)
+        for i, button in enumerate(self.tab_buttons):
+            button.setChecked(i == index)
 
     def show_loading(self):
         if self.view.get('in_game'):
@@ -398,6 +598,8 @@ class InGamePage(QWidget):
         self.state.setText('게임 접속을 기다리고 있습니다. 게임이 시작되면 자동으로 이 화면으로 넘어옵니다.')
         if not keep_items:
             self.items.clear()
+            self.augments.clear(reset_choices=True)
+            self.augment_tab_shown = False
         self.gold_bar.set_values(0, 0)
         self.gold_text.setText('')
         self.ally.show_team([])
@@ -417,7 +619,7 @@ class InGamePage(QWidget):
             self.question.clear()           # 다른 화면처럼 보낸 질문은 지운다 (Enter를 또 눌러 같은 질문이 가지 않게)
 
     def set_busy(self, busy):
-        for widget in (self.send, self.recommend, self.refresh):
+        for widget in (self.send, self.recommend, self.refresh, self.augments.button):
             widget.setEnabled(not busy)
 
 
@@ -428,6 +630,13 @@ QLabel#subtle { color: @muted; font-size: 12px; }
 QLabel#panelTitle { font-size: 16px; font-weight: 700; }
 QFrame#teamPanel, QFrame#coachPanel, QFrame#itemCard { background: @surface; border: 1px solid @border; border-radius: 12px; }
 QFrame#itemPick { background: @raised; border-radius: 8px; }
+QPushButton#tab { background: transparent; color: @muted; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 6px 10px; font-weight: 600; }
+QPushButton#tab:hover { color: @text; }
+QPushButton#tab:checked { color: @accent_fg; border-bottom: 2px solid @accent; }
+QLabel#augPercent { color: @accent_fg; font-size: 15px; font-weight: 800; }
+QLabel#augRarity { color: @muted; font-size: 11px; font-weight: 700; padding: 0 6px; }
+QLabel#augRarity[rarity="골드"] { color: @gold; }
+QLabel#augRarity[rarity="프리즘"] { color: @blue_fg; }
 QLabel#pickIcon { background: @inset; border: 1px solid @border; border-radius: 5px; }
 QLabel#pickName { font-size: 14px; font-weight: 700; }
 QLabel#pickPrice { color: @gold; font-size: 13px; font-weight: 700; }

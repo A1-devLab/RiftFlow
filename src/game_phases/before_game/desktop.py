@@ -14,7 +14,7 @@ from riot import get_champ_select_session
 
 
 # LCU gameMode 코드 → 화면 이름. 모르는 코드는 코드 그대로 보여 준다.
-MODE_NAMES = {'CLASSIC': '소환사의 협곡', 'ARAM': '칼바람 나락', 'URF': 'U.R.F.', 'CHERRY': '아레나',
+MODE_NAMES = {'CLASSIC': '소환사의 협곡', 'ARAM': '칼바람 나락', 'KIWI': '증바람', 'URF': 'U.R.F.', 'CHERRY': '아레나',
               'ONEFORALL': '단일 챔피언', 'NEXUSBLITZ': '넥서스 돌격', 'ULTBOOK': '궁극기 주문서',
               'PRACTICETOOL': '연습 모드', 'TUTORIAL': '튜토리얼'}
 

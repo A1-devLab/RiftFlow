@@ -57,6 +57,11 @@ class InGameBody(BaseModel):
     history: List[dict] = Field(default_factory=list, max_length=8)
 
 
+class AugmentBody(BaseModel):
+    augment_ids: List[int] = Field(min_length=2, max_length=3)
+    view: dict = Field(default_factory=dict)
+
+
 class GeneralBody(BaseModel):
     question: str = Field(min_length=1, max_length=1000)
     context: Optional[dict] = None
@@ -228,6 +233,15 @@ def create_app(settings=None, gateway=None, clock=time.time, generate=None):
     @app.post("/v1/coach/in-game")
     def coach_in_game(body: InGameBody, reservation=Depends(ai_device)):
         return ai_call(ai.in_game, body, reservation)
+
+    @app.post("/v1/coach/augments")
+    def coach_augments(body: AugmentBody, reservation=Depends(ai_device)):
+        return ai_call(ai.augments, body, reservation)
+
+    @app.get("/v1/augments")
+    def augments(_device=Depends(device)):
+        """증강 이름, 등급, 공식 효과만 준다. 승률 같은 경기 통계는 없다 (라이엇 정책)."""
+        return {"mode": "KIWI", "augments": ai.augment_catalog()}
 
     @app.post("/v1/coach/general")
     def coach_general(body: GeneralBody, reservation=Depends(ai_device)):

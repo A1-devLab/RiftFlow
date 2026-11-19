@@ -17,7 +17,7 @@ def version_key(value):
 
 
 # 게임 모드 → Data Dragon 아이템의 maps 번호. U.R.F.는 협곡 아이템을 쓴다.
-MODE_MAPS = {"CLASSIC": "11", "URF": "11", "ARURF": "11", "ARAM": "12", "CHERRY": "30"}
+MODE_MAPS = {"CLASSIC": "11", "URF": "11", "ARURF": "11", "ARAM": "12", "KIWI": "12", "CHERRY": "30"}
 
 
 def item_map_for(game_mode=None, map_number=None):
