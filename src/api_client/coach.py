@@ -44,6 +44,22 @@ def coach_in_game(client, view, question, history=None):
         return _answer_failure(error)
 
 
+def recommend_augments(client, view, augment_ids):
+    try:
+        return client.post_json('/v1/coach/augments', {'augment_ids': [int(i) for i in augment_ids][:3],
+                                                       'view': payloads.live_view(view)}, timeout=AI_TIMEOUT)
+    except RiotApiError as error:
+        return _answer_failure(error)
+
+
+def augment_catalog(client):
+    """증바람 증강 목록. 서버와 통신하지 못하면 빈 목록."""
+    try:
+        return client.get_json('/v1/augments').get('augments') or []
+    except (RiotApiError, AttributeError):
+        return []
+
+
 def coach_general(client, question, context, history=None):
     try:
         result = client.post_json('/v1/coach/general', {'question': payloads.text(question, 1000),

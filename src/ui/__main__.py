@@ -22,7 +22,10 @@ from riot import (LiveMatchStatus, get_gameflow_phase, get_match_detail, get_cur
                   get_recent_history, get_solo_rank, start_login_watcher)
 from game_phases.before_game.desktop import describe_session, answer_before_game, get_before_game_context
 from game_phases.before_game.runes import apply_recommended_page, format_explanation, recommend_runes
-from game_phases.in_game.desktop import RECOMMEND_QUESTION, answer_in_game, describe_scoreboard, get_in_game_context
+from game_phases.in_game.augments import recommend_augments
+from game_phases.in_game.desktop import (RECOMMEND_QUESTION, answer_in_game, describe_scoreboard, get_in_game_context,
+                                         prompt_player)
+from knowledge.augments import catalog_path, ensure_catalog
 from knowledge.before_game import champion_catalog, save_observations, personal_context, rune_catalog, named_rune_page, canonical_champion
 from knowledge.in_game import item_catalog
 from .pages.out_game import OutGamePage
@@ -184,6 +187,8 @@ class Window(QMainWindow):
         self.chats = ChatHistory(self.data_dir / "chat_history.db")
         self.chat_ids = {'general': self.chats.latest('general'), 'pick': None, 'in_game': None}
         self.poll_job = None
+        self.augment_job = None       # 증강 목록 받기. 다른 작업(질문)을 막지 않게 따로 돈다
+        self.augment_catalog = []
         self.phase = 'idle'
         self.rune_cache = {}          # 같은 챔피언·상대·성향이면 다시 부르지 않는다 (Gemini 하루 호출 한도)
         self.rune_candidate = None    # 직전 폴링에서 본 조건. 두 번 연속 같으면 자동 추천
@@ -319,6 +324,8 @@ class Window(QMainWindow):
         self.in_game = InGamePage(assets=self.assets, portraits=self.portraits)
         self.in_game.askRequested.connect(self.ask_in_game)
         self.in_game.refreshRequested.connect(self.poll_champ_select)
+        self.in_game.augmentRequested.connect(self.ask_augments)
+        self.in_game.augmentCatalogRequested.connect(self.load_augments)
         self.stack.addWidget(self.in_game)
 
     def poll_champ_select(self):
@@ -414,6 +421,63 @@ class Window(QMainWindow):
         self.start_job(
             work,
             lambda result: self.show_in_game_answer(result, question), on_error=self.in_game.answer.setPlainText)
+
+    # --- 증바람 증강 추천도
+    def load_augments(self):
+        """증강 목록을 한 번 받는다. 배포판은 서버가 하루마다 새로 받아 둔 목록을, 개발 모드는 직접 받는다."""
+        if self.augment_catalog or self.augment_job is not None or self.closing:
+            return
+        server, path = self.server(), catalog_path(self.data_dir)
+        if server is not None:
+            from api_client.coach import augment_catalog
+            work = lambda: augment_catalog(server)
+        else:
+            work = lambda: ensure_catalog(path)
+        job = Job(work, self)
+        self.augment_job = job
+        job.result.connect(self.show_augment_catalog)
+        job.failed.connect(lambda _message: self.in_game.augments.set_catalog([]))
+        job.finished.connect(self.finish_augment_job)
+        job.start()
+
+    def show_augment_catalog(self, augments):
+        self.augment_catalog = list(augments or [])
+        self.in_game.augments.set_catalog(self.augment_catalog)
+
+    def finish_augment_job(self):
+        job, self.augment_job = self.augment_job, None
+        if job is not None:
+            job.deleteLater()
+
+    def ask_augments(self, request):
+        if self.jobs:
+            return
+        if not self.ai_ready():
+            self.in_game.augments.show_result({'message': 'AI 답변에 필요한 API 키(%s)를 .env에 설정해 주세요.' % llm.key_env()})
+            return
+        ids, view = request['augment_ids'], request['view']
+        by_id = {a['id']: a for a in self.augment_catalog}
+        names = ', '.join(by_id[i]['name'] for i in ids if i in by_id)
+        server, path = self.server(), self.db_path
+        if server is not None:
+            from api_client.coach import recommend_augments as recommend_remote
+            work = lambda: recommend_remote(server, view, ids)
+        else:
+            model = self.model.text().strip() or llm.default_model()
+            offered = [by_id[i] for i in ids if i in by_id]
+            work = lambda: recommend_augments(path, view, offered, prompt_player=prompt_player,
+                                              generate=lambda prompt, **options: generate(prompt, model=model,
+                                                                                           retries=0, **options))
+        self.in_game.augments.caption.setText('받은 증강과 지금 조합을 비교하고 있습니다…')
+        self.status.setText('증강 추천도 계산 중')
+        self.start_job(work, lambda result: self.show_augment_result(result, names),
+                       on_error=lambda message: self.in_game.augments.show_result({'message': message}))
+
+    def show_augment_result(self, result, names):
+        self.in_game.augments.show_result(result)
+        self.record_chat('in_game', '증강 추천도: ' + names, result.get('answer') or result.get('message'))
+        self.show_transcript(self.in_game.answer, 'in_game')
+        self.status.setText('증강 추천도 완료' if result.get('generated') else '증강 추천도 확인 필요')
 
     def show_in_game_answer(self, result, question=None):
         if result.get('options') is not None or question == RECOMMEND_QUESTION:
@@ -1008,10 +1072,11 @@ class Window(QMainWindow):
         self.champ_timer.stop()
         if self.login_watcher is not None:
             self.login_watcher.stop()
-        if self.poll_job is not None and self.poll_job.isRunning():
-            self.poll_job.finished.connect(self.close)
-            event.ignore()
-            return
+        for job in (self.poll_job, self.augment_job):
+            if job is not None and job.isRunning():
+                job.finished.connect(self.close)
+                event.ignore()
+                return
         event.accept()
 
 

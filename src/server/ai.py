@@ -4,11 +4,14 @@
 """
 import json
 import threading
+from pathlib import Path
 
 from game_phases import payloads
 from game_phases.before_game.desktop import answer_before_game
 from game_phases.before_game.runes import recommend_runes
-from game_phases.in_game.desktop import answer_in_game
+from game_phases.in_game.augments import recommend_augments
+from game_phases.in_game.desktop import answer_in_game, prompt_player
+from knowledge.augments import catalog_path, ensure_catalog
 from knowledge.before_game import canonical_champion
 from knowledge.runes import ensure_rune_trees
 from ui.services import ask_general
@@ -89,6 +92,18 @@ class AiService:
         result = answer_in_game(self.knowledge_path, payloads.live_view(body.get('view')),
                                 payloads.text(body.get('question'), 1000), generate=self.generate,
                                 history=payloads.history(body.get('history')))
+        return result, 1
+
+    def augment_catalog(self):
+        """증바람 증강 목록 (공식 이름, 등급, 효과). 하루에 한 번 새로 받는다."""
+        return ensure_catalog(catalog_path(Path(self.knowledge_path).parent))
+
+    def augments(self, body):
+        """받은 증강 2~3개의 AI 추천도. 목록에 없는 ID는 버리고 남은 증강으로만 묻는다."""
+        by_id = {a['id']: a for a in self.augment_catalog()}
+        offered = [by_id[i] for i in body.get('augment_ids') or [] if i in by_id]
+        result = recommend_augments(self.knowledge_path, payloads.live_view(body.get('view')), offered,
+                                    generate=self.generate, prompt_player=prompt_player)
         return result, 1
 
     def general(self, body):
