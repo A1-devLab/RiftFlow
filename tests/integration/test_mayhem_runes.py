@@ -45,7 +45,7 @@ class MayhemRuneTests(unittest.TestCase):
         self.assertFalse(page.rune_button.isEnabled())
         self.assertFalse(page.apply_button.isEnabled())
         self.assertIn('룬 페이지를 쓰지 않아', page.rune_view.placeholder.text())
-        self.assertIn('F10', page.rune_view.placeholder.text())
+        self.assertIn('F8', page.rune_view.placeholder.text())
         runes, asks = [], []
         page.runeRequested.connect(runes.append)
         page.askRequested.connect(asks.append)

@@ -111,7 +111,7 @@ def open_link(url):
 
 
 HOME, PICK, INGAME, CHAT, SETTINGS = range(5)
-AUGMENT_HOTKEY = 'F10'
+AUGMENT_HOTKEY = 'F8'                 # 증바람 증강 선택 화면 읽기 (음성 질문은 기본 F10)
 # 사이드바 아이콘 (Segoe Fluent Icons / MDL2 글리프): 기록, 사람들, 게임 패드, 대화, 설정
 NAV_GLYPHS = ('\ue81c', '\ue716', '\ue7fc', '\ue8bd', '\ue713')
 NAV_TIPS = ('최근 전적과 AI 채팅', '챔피언 선택 중 픽, 밴, 추천 룬', '게임 중 스코어보드와 추천 아이템',
@@ -202,10 +202,10 @@ class Window(QMainWindow):
         self.recorder.failed.connect(self.on_voice_failed)
         self.hotkey = GlobalHotkey(self)
         self.hotkey.pressed.connect(self.toggle_voice)
-        self.augment_hotkey = GlobalHotkey(self, hotkey_id=0x5247)      # F10: 증바람 증강 화면 읽기
+        self.augment_hotkey = GlobalHotkey(self, hotkey_id=0x5247)      # F8: 증바람 증강 화면 읽기
         self.augment_hotkey.pressed.connect(self.read_augment_screen)
         self.pending_augments = None          # 화면에서 읽은 증강 ID. 지금 작업이 끝나면 추천도를 묻는다
-        self.speak_augments = False           # F10으로 시작한 추천도는 결과를 소리로 읽는다
+        self.speak_augments = False           # 단축키로 시작한 추천도는 결과를 소리로 읽는다
         self.speaker = Speaker(self)
         self.pending_voice = None             # 받아 적은 질문. 지금 작업이 끝나면 보낸다
         self.speak_next = False               # 다음 답을 소리로 읽을지 (음성으로 물은 질문만)
@@ -387,9 +387,11 @@ class Window(QMainWindow):
             self.rune_applied_page = None
             self.rune_candidate = self.rune_shown_key = self.pending_rune_apply = None
             self.chat_ids['pick'] = None
+            self.before_game.answer.show_messages([])
             self.before_game.answer.setPlainText('픽창에서 궁금한 점을 물어보세요. 이번 픽창의 대화는 이어서 기억합니다.')
         if phase in ('loading', 'in_game') and previous not in ('loading', 'in_game'):
             self.chat_ids['in_game'] = None       # 새 게임: 인게임 대화를 새로 시작
+            self.in_game.answer.show_messages([])
             self.in_game.answer.setPlainText('게임 중 궁금한 점을 물어보세요. 이번 게임의 대화는 이어서 기억합니다.')
             self.in_game.items.clear()
         if phase == 'champ_select':
@@ -454,15 +456,21 @@ class Window(QMainWindow):
         value = self.voice.value('voice/' + name, default)
         return value if not isinstance(default, bool) else str(value).lower() in ('true', '1')
 
+    def voice_hotkey(self):
+        """저장된 음성 질문 단축키. 예전 버전에서 고른 F8은 이제 증강 읽기 키라서 기본값(F10)으로 바꾼다."""
+        hotkey = self.setting('hotkey', DEFAULT_HOTKEY)
+        return hotkey if hotkey in HOTKEYS else DEFAULT_HOTKEY
+
     def apply_voice_settings(self):
         """단축키를 등록한다. 앱을 켤 때(main)와 설정을 바꿀 때만 부른다 (테스트에서 창을 만들 때는 등록하지 않는다)."""
         enabled = self.setting('enabled', True)
-        hotkey = self.setting('hotkey', DEFAULT_HOTKEY)
+        hotkey = self.voice_hotkey()
         self.hotkey.unregister()
         message = '음성 질문을 끄면 단축키도 해제됩니다.'
         if enabled:
             ok = self.hotkey.register(hotkey)
-            message = (f'게임 중 {hotkey}를 누르고 말하면 질문합니다. 말을 멈추면 자동으로 끝납니다.' if ok else
+            message = (f'게임 중이든 평소든 {hotkey}를 누르고 말하면 질문합니다. 말을 멈추면 자동으로 끝납니다. '
+                       f'증바람 증강 선택 화면에서는 {AUGMENT_HOTKEY}를 누르세요.' if ok else
                        f'{hotkey}는 다른 프로그램이 쓰고 있어 등록하지 못했습니다. 다른 단축키를 골라 주세요.')
         self.augment_hotkey.unregister()
         if self.setting('augment_key', True) and not self.augment_hotkey.register(AUGMENT_HOTKEY):
@@ -542,12 +550,14 @@ class Window(QMainWindow):
         self.pending_voice = text           # 받아 적기 작업이 끝나면(job_done) 질문으로 보낸다
 
     def ask_voice(self, text):
-        """받아 적은 질문을 게임 중이면 인게임 AI에, 아니면 일반 AI 질문에 보낸다."""
+        """받아 적은 질문을 게임 중이면 인게임 AI에, 아니면 전적 화면의 AI 질문에 보내고 그 화면을 연다."""
         self.speak_next = self.setting('speak', True)
         if self.phase in ('in_game', 'loading') or self.in_game.view.get('in_game'):
+            self.navigate(INGAME)
             self.in_game.question.setText(text)
             self.in_game.submit()
         else:
+            self.navigate(HOME)
             self.out_game.question.setText(text)
             self.out_game.submit()
         self.status.setText('음성 질문: ' + text)
@@ -559,7 +569,7 @@ class Window(QMainWindow):
                 self.speaker.say(text)
 
     def read_augment_screen(self):
-        """F10: 게임 모니터를 한 장 찍어 증강 이름을 읽고, 증강 탭에 채운 뒤 추천도를 묻는다."""
+        """F8: 게임 모니터를 한 장 찍어 증강 이름을 읽고, 증강 탭에 채운 뒤 추천도를 묻는다."""
         if self.jobs or self.pending_augments is not None or self.pending_voice is not None:
             self.status.setText('다른 작업이 끝난 뒤 다시 눌러 주세요.')
             return
@@ -696,9 +706,7 @@ class Window(QMainWindow):
     def show_transcript(self, widget, screen):
         """픽창·인게임 답변 칸에 이번 픽창·게임의 대화 전체를 보여 준다 (최신이 아래)."""
         messages = self.chats.messages(self.chat_ids[screen]) if self.chat_ids.get(screen) else []
-        widget.setPlainText('\n\n'.join(('나: ' if m['role'] == 'user' else 'AI: ') + m['text'] for m in messages))
-        bar = widget.verticalScrollBar()
-        bar.setValue(bar.maximum())
+        widget.show_messages(messages)          # 말풍선 대화 (ui/chat_view.py)
 
     def finish_champ_poll(self):
         job = self.poll_job
@@ -835,6 +843,8 @@ class Window(QMainWindow):
         self.rune_shown_key = key
         if request.get('question'):
             self.record_chat('pick', request['question'], None)
+            self.show_transcript(self.before_game.answer, 'pick')
+            self.before_game.answer.setPlainText('말한 성향을 반영해 룬을 다시 고르고 있습니다…')
         self.before_game.rune_view.show_message('챔피언과 상대 조합, 공식 룬 설명을 바탕으로 룬을 고르고 있습니다…')
         self.status.setText('룬 추천 중')
         server = self.server()
@@ -976,7 +986,7 @@ class Window(QMainWindow):
         self.theme_mode.setMaximumWidth(320)
         box.addWidget(self.theme_mode)
 
-        box = self.card(layout, '음성 질문', '게임 중 단축키를 누르고 말하면 질문하고, 답을 소리로 읽어 줍니다. '
+        box = self.card(layout, '음성 질문', '게임 중이든 평소든 단축키를 누르고 말하면 질문하고, 답을 소리로 읽어 줍니다. '
                                           '음성은 글자로 바꾸는 데만 쓰고 저장하지 않습니다 (HASA 음성 인식).')
         enabled = QCheckBox('음성 질문 사용')
         enabled.setChecked(self.setting('enabled', True))
@@ -986,8 +996,7 @@ class Window(QMainWindow):
         row.addWidget(label('단축키', 'muted'))
         self.hotkey_choice = QComboBox()
         self.hotkey_choice.addItems(HOTKEYS)
-        current = self.setting('hotkey', DEFAULT_HOTKEY)
-        self.hotkey_choice.setCurrentIndex(HOTKEYS.index(current) if current in HOTKEYS else 0)
+        self.hotkey_choice.setCurrentIndex(HOTKEYS.index(self.voice_hotkey()))
         self.hotkey_choice.currentTextChanged.connect(lambda text: self.save_voice_setting('hotkey', text))
         self.hotkey_choice.setMaximumWidth(220)
         row.addWidget(self.hotkey_choice)

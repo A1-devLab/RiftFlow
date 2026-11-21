@@ -1,8 +1,9 @@
 """Champion-select view with live picks, bans, rune recommendation and coaching chat."""
+from ui.chat_view import ChatView
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QSizePolicy, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget,
+    QPushButton, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from ui.match_assets import MatchAssets
@@ -257,9 +258,16 @@ class BeforeGamePage(QWidget):
         self.rune_status.hide()
         root.addWidget(self.rune_status)
         self.champion.textChanged.connect(self._rune_champion_changed)
-        self.answer = QTextBrowser()
+        chat = QFrame(objectName='chatPanel')     # 인게임처럼 'AI에게 질문' 패널 안에 말풍선 대화
+        chat_box = QVBoxLayout(chat)
+        chat_box.setContentsMargins(14, 12, 14, 12)
+        chat_box.setSpacing(8)
+        chat_box.addWidget(label('AI에게 질문', 'cardTitle'))
+        self.answer = ChatView(bubble_width=560)
+        self.answer.setMinimumHeight(150)
         self.answer.setPlainText('챔피언을 고르면 공식 자료와 실제 픽창 정보를 바탕으로 질문에 답합니다.')
-        root.addWidget(self.answer, 1)
+        chat_box.addWidget(self.answer, 1)
+        root.addWidget(chat, 1)
         form = QHBoxLayout()
         self.question = QLineEdit()
         self.question.setMaxLength(1000)
@@ -270,7 +278,7 @@ class BeforeGamePage(QWidget):
         self.send.clicked.connect(self.submit)
         form.addWidget(self.question, 1)
         form.addWidget(self.send)
-        root.addLayout(form)
+        chat_box.addLayout(form)
 
     def no_runes(self):
         """증바람, 아레나처럼 룬 페이지를 쓰지 않는 모드인지."""
@@ -284,7 +292,7 @@ class BeforeGamePage(QWidget):
             name = view.get('mode_name') or view.get('game_mode')
             self.rune_champion, self.rune_page = None, None
             self.rune_view.show_message('%s에서는 룬 페이지를 쓰지 않아 룬을 추천하지 않습니다. '
-                                        '증강은 게임 중 증강 선택 화면에서 F10을 누르면 읽어서 추천도를 보여 줍니다.' % name)
+                                        '증강은 게임 중 증강 선택 화면에서 F8을 누르면 읽어서 추천도를 보여 줍니다.' % name)
         if self.no_runes() != was_no_runes:
             self._sync_buttons()
         mode = ' · %s' % view['mode_name'] if view.get('mode_name') else ''
@@ -352,6 +360,7 @@ class BeforeGamePage(QWidget):
             return
         self.user_requests.append(question)
         self.question.clear()
+        self.answer.set_pending(question)       # 답을 기다리는 동안 내 질문을 먼저 보여 준다
         if '룬' in question and self.champion.text().strip() and not self.no_runes():
             self.runeRequested.emit(self._request(question))
         else:
@@ -424,6 +433,8 @@ QLabel#cardTitle[side="enemy"] { color: @red_fg; }
 QLabel#teamText { color: @text2; font-size: 13px; }
 QPushButton:disabled { color: @disabled_fg; background: @disabled; }
 QFrame#runePanel { background: @surface; border: 1px solid @border; border-radius: 12px; }
+QFrame#chatPanel { background: @surface; border: 1px solid @border; border-radius: 12px; }
+QFrame#chatPanel > QLabel { background: transparent; }
 QFrame#runePanel QLabel, QFrame#runePanel QWidget { background: transparent; }
 QLabel#runeIcon { background: @inset; border: 1px solid @border; }
 QLabel#runeName { color: @text2; font-size: 11px; }

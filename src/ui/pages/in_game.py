@@ -1,9 +1,10 @@
 """Live scoreboard with estimated team gold and in-game coaching questions."""
+from ui.chat_view import ChatView
 from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (
     QComboBox, QCompleter, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy,
-    QStackedWidget, QTextBrowser, QVBoxLayout, QWidget,
+    QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from game_phases.in_game.augments import MAX_OFFERED, MIN_OFFERED, NOT_WIN_RATE
@@ -539,7 +540,7 @@ class InGamePage(QWidget):
         right = QVBoxLayout(coach)
         right.setContentsMargins(14, 12, 14, 12)
         right.addWidget(label('AI에게 질문', 'panelTitle'))
-        self.answer = QTextBrowser()
+        self.answer = ChatView()               # 홈 화면처럼 말풍선 대화
         self.answer.setToolTip('스코어보드(레벨·KDA·CS·아이템)와 공식 자료로만 답합니다. '
                                '시야, 상대 주문 쿨타임, 오브젝트 타이머는 알 수 없습니다.')
         self.answer.setPlainText('게임에 접속하면 현재 스코어보드를 바탕으로 질문에 답합니다.')
@@ -556,7 +557,7 @@ class InGamePage(QWidget):
         self.mic.setObjectName('mic')
         self.mic.setCheckable(True)
         self.mic.setCursor(Qt.PointingHandCursor)
-        self.mic.setToolTip('눌러서 말하면 질문으로 보냅니다. 게임 중에는 단축키로 쓸 수 있습니다 (설정에서 변경).')
+        self.mic.setToolTip('눌러서 말하면 질문으로 보냅니다. 단축키(기본 F10)로도 됩니다 (설정에서 변경).')
         self.mic.clicked.connect(lambda: self.voiceRequested.emit())
         form.addWidget(self.question, 1)
         form.addWidget(self.mic)
@@ -618,6 +619,7 @@ class InGamePage(QWidget):
     def _emit(self, question):
         if not question or not self.send.isEnabled():
             return
+        self.answer.set_pending(question)
         self.askRequested.emit({'question': question, 'view': self.view})
 
     def submit(self):
@@ -671,5 +673,4 @@ QLabel#rowStat { color: @text2; }
 QLabel#rowKda { font-size: 15px; font-weight: 700; }
 QLabel#rowGold { color: @gold; font-weight: 700; }
 QLabel#rowItem { background: @inset; border: 1px solid @border; border-radius: 4px; }
-QTextBrowser { background: @raised; border: 1px solid @border; padding: 10px; }
 """
