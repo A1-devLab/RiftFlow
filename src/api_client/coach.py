@@ -52,6 +52,16 @@ def recommend_augments(client, view, augment_ids):
         return _answer_failure(error)
 
 
+def transcribe(client, audio):
+    """음성(WAV 바이트) → {'text', 'message'}. 서버와 통신하지 못하면 text 없이 안내 문장만."""
+    import base64
+    try:
+        return client.post_json('/v1/voice/transcribe', {'audio_base64': base64.b64encode(audio).decode('ascii')},
+                                timeout=60)
+    except RiotApiError as error:
+        return {'text': None, 'message': str(error)}
+
+
 def augment_catalog(client):
     """증바람 증강 목록. 서버와 통신하지 못하면 빈 목록."""
     try:
