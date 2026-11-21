@@ -218,6 +218,8 @@ class WindowVoiceTests(unittest.TestCase):
         window.out_game.askRequested.connect(asked.append)
         window.ask_voice('요즘 칼바람 꿀챔 뭐야?')
         self.assertEqual(asked, ['요즘 칼바람 꿀챔 뭐야?'])
+        while window.jobs:                  # 답변 작업이 임시 폴더의 DB를 쥐고 있으면 정리할 때 지우지 못한다
+            self.app.processEvents()
 
 
 if __name__ == '__main__':
