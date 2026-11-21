@@ -513,18 +513,53 @@ class Window(QMainWindow):
             return
         self.recorder.start()
 
+    def voice_target(self):
+        """음성 질문을 보낼 대화창: 게임 중이면 인게임, 픽창이면 픽창, 그 밖에는 전적 화면."""
+        if self.phase in ('in_game', 'loading') or self.in_game.view.get('in_game'):
+            return 'in_game'
+        if self.phase == 'champ_select' or self.stack.currentIndex() == PICK:
+            return 'pick'
+        return 'home'
+
+    def show_voice_progress(self, text, error=None):
+        """음성 질문 진행 상황을 그 대화창에 글로 쓴 질문처럼 내 말풍선으로 보여 준다.
+        error가 있으면 진행 말풍선을 지우고 AI 쪽 안내로 남긴다."""
+        target = self.voice_target()
+        self.navigate({'in_game': INGAME, 'pick': PICK, 'home': HOME}[target])
+        if target == 'home':
+            self.out_game.set_voice_bubble(text)
+            if error:
+                self.out_game.show_error(error)
+            return
+        chat = self.in_game.answer if target == 'in_game' else self.before_game.answer
+        if not error:
+            chat.setPlainText('')           # 지난 안내('확인하고 있습니다…', 오류)가 진행 말풍선 아래에 남지 않게
+        chat.set_pending(text)
+        if error:
+            chat.setPlainText(error)
+
     def on_voice_started(self):
         self.in_game.set_listening(True)
         self.status.setText('듣고 있습니다. 말을 멈추면 자동으로 질문합니다.')
+        self.show_voice_progress('🎙 듣고 있습니다…')
 
     def on_voice_failed(self, message):
         self.in_game.set_listening(False)
         if message:
             self.status.setText(message)
+            self.show_voice_progress(None, error=message)
+
+    def on_voice_error(self, message):
+        """받아 적기 요청 자체가 실패했을 때 (서버 연결 등)."""
+        self.status.setText(message)
+        self.show_voice_progress(None, error=message)
+        if self.setting('speak', True):
+            self.speaker.say(message)
 
     def on_voice_audio(self, audio):
         self.in_game.set_listening(False)
         self.status.setText('음성을 글자로 바꾸고 있습니다…')
+        self.show_voice_progress('🎙 음성을 글자로 바꾸고 있습니다…')
         server = self.server()
         if server is not None:
             from api_client.coach import transcribe
@@ -537,25 +572,28 @@ class Window(QMainWindow):
                     return {'text': speech.transcribe(audio), 'message': None}
                 except GeminiError as error:
                     return {'text': None, 'message': error.message}
-        self.start_job(work, self.on_voice_text)
+        self.start_job(work, self.on_voice_text, on_error=self.on_voice_error)
 
     def on_voice_text(self, result):
         text = (result or {}).get('text')
         if not text:
-            message = (result or {}).get('message') or '목소리를 알아듣지 못했습니다.'
-            self.status.setText(message)
-            if self.setting('speak', True):
-                self.speaker.say(message)
+            self.on_voice_error((result or {}).get('message') or '목소리를 알아듣지 못했습니다.')
             return
+        self.show_voice_progress(text)      # 받아 적은 글을 내 질문 말풍선으로 먼저 보여 준다
         self.pending_voice = text           # 받아 적기 작업이 끝나면(job_done) 질문으로 보낸다
 
     def ask_voice(self, text):
-        """받아 적은 질문을 게임 중이면 인게임 AI에, 아니면 전적 화면의 AI 질문에 보내고 그 화면을 연다."""
+        """받아 적은 질문을 글로 쓴 것처럼 그 화면의 대화창에 보낸다 (인게임, 픽창, 전적 화면)."""
         self.speak_next = self.setting('speak', True)
-        if self.phase in ('in_game', 'loading') or self.in_game.view.get('in_game'):
+        target = self.voice_target()
+        if target == 'in_game':
             self.navigate(INGAME)
             self.in_game.question.setText(text)
             self.in_game.submit()
+        elif target == 'pick':
+            self.navigate(PICK)
+            self.before_game.question.setText(text)
+            self.before_game.submit()
         else:
             self.navigate(HOME)
             self.out_game.question.setText(text)

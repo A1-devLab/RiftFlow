@@ -165,6 +165,31 @@ class WindowScreenTests(unittest.TestCase):
         self.assertEqual(window.stack.currentIndex(), HOME)
         self.assertEqual(window.out_game.question.text(), '요즘 탑 뭐가 좋아?')
 
+    def test_voice_shows_up_in_the_chat_like_a_typed_question(self):
+        from ui.__main__ import HOME, PICK
+        window = self.window()
+        window.on_voice_started()                                   # 전적 화면: 듣는 중 말풍선
+        self.assertEqual(window.stack.currentIndex(), HOME)
+        self.assertIsNotNone(window.out_game.voice_bubble)
+        window.on_voice_text({'text': '요즘 탑 뭐가 좋아?'})
+        self.assertEqual(window.pending_voice, '요즘 탑 뭐가 좋아?')
+        with patch.object(window, 'ask_out_game'):
+            window.ask_voice('요즘 탑 뭐가 좋아?')
+        self.assertIsNone(window.out_game.voice_bubble)              # 진행 말풍선은 실제 질문 말풍선으로 바뀐다
+        texts = [b.text() for b in window.out_game.chat_body.findChildren(type(window.status)) if b.objectName() == 'userBubble']
+        self.assertEqual(texts.count('요즘 탑 뭐가 좋아?'), 1)
+        window.phase = 'champ_select'                               # 픽창에서는 픽창 대화창으로
+        window.on_voice_started()
+        self.assertEqual(window.stack.currentIndex(), PICK)
+        self.assertIn('듣고 있습니다', window.before_game.answer.toPlainText())
+        window.on_voice_failed('목소리가 들리지 않았습니다.')
+        self.assertNotIn('듣고 있습니다', window.before_game.answer.toPlainText())
+        self.assertIn('목소리가 들리지 않았습니다.', window.before_game.answer.toPlainText())
+        window.on_voice_audio(b'RIFF')
+        self.assertIn('나: 🎙 음성을 글자로 바꾸고 있습니다…', window.before_game.answer.toPlainText())
+        while window.jobs:
+            self.app.processEvents()
+
     def test_no_game_window_is_explained_without_calling_the_server(self):
         window = self.window()
         with patch('ui.__main__.capture_game', return_value=(None, '롤 게임 창을 찾지 못했습니다.')), \

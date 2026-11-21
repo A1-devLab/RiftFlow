@@ -28,6 +28,8 @@ class ChatView(QScrollArea):
         self.layout_.addStretch()
         self.setWidget(self.body)
         self.messages, self.pending, self.note = [], None, ''
+        # 말풍선 높이는 그린 뒤에 잡히므로, 내용 높이가 바뀔 때마다 맨 아래(최신)로 따라간다.
+        self.verticalScrollBar().rangeChanged.connect(lambda _low, high: self.verticalScrollBar().setValue(high))
         theme.style(self, STYLE)
 
     # --- 예전 QTextBrowser처럼 부르는 쪽

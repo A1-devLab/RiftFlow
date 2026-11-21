@@ -73,6 +73,7 @@ class OutGamePage(QWidget):
         left.addWidget(self._matches_panel(), 1)
         self.pending = None
         self.history_stack = QStackedWidget()
+        self.voice_bubble = None            # 음성 질문을 듣거나 받아 적는 동안 내 쪽에 보이는 말풍선
         loading = QFrame(objectName="loadingPanel")
         loading_box = QVBoxLayout(loading)
         self.loading_label = QLabel("전적을 불러오는 중 .", objectName="loadingText")
@@ -287,10 +288,22 @@ class OutGamePage(QWidget):
         self.messages.insertWidget(self.messages.count() - 1, bubble)
         return bubble
 
+    def set_voice_bubble(self, text):
+        """음성 질문 진행 상황을 내 말풍선 자리에 보여 준다. None이면 지운다."""
+        if self.voice_bubble is not None:
+            self.messages.removeWidget(self.voice_bubble)
+            self.voice_bubble.setParent(None)
+            self.voice_bubble.deleteLater()
+            self.voice_bubble = None
+        if text:
+            self.voice_bubble = self._add(text, True)
+            self._scroll_bottom()
+
     def submit(self):
         question = self.question.text().strip()
         if not question or not self.send.isEnabled():
             return
+        self.set_voice_bubble(None)
         self._add(question, True)
         self.question.clear()
         self._clear_pending()
