@@ -23,7 +23,7 @@ SPEECH_LEVEL = 0.004         # 말소리로 보는 최소 음량 (전체 음량 
                              # 잡히게 낮게 두고, 실제 기준은 방 소음의 4배로 정한다 (시끄러우면 올라간다)
 TARGET_PEAK = 0.7            # 작게 녹음된 소리는 음성 인식에 보내기 전에 이 높이까지 키운다
 MAX_GAIN = 20.0
-HOTKEYS = ('Ctrl+Shift+V', 'Ctrl+Alt+V', 'F8', 'F9')
+HOTKEYS = ('F10', 'F9', 'Ctrl+Shift+V', 'Ctrl+Alt+V')     # F8은 증강 읽기 단축키라 고를 수 없다
 DEFAULT_HOTKEY = HOTKEYS[0]
 MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_NOREPEAT = 0x1, 0x2, 0x4, 0x4000
 WM_HOTKEY = 0x0312

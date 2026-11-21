@@ -1,4 +1,4 @@
-"""F10 증강 화면 읽기: 이름 맞추기, 이미지 인식 호출, 서버 API, 검은 캡처, 읽은 뒤 추천도까지 이어지는 흐름."""
+"""F8 증강 화면 읽기: 이름 맞추기, 이미지 인식 호출, 서버 API, 검은 캡처, 읽은 뒤 추천도까지 이어지는 흐름."""
 import base64
 import importlib.util
 import io
@@ -151,6 +151,19 @@ class WindowScreenTests(unittest.TestCase):
         window.on_augments_read({'augments': CATALOG[:1], 'message': None})
         self.assertIsNone(window.pending_augments)
         self.assertIn('읽지 못했습니다', window.speaker.say.call_args.args[0])
+
+    def test_old_f8_voice_key_moves_to_f10_and_voice_outside_games_opens_the_home_chat(self):
+        from ui.__main__ import AUGMENT_HOTKEY, HOME
+        window = self.window()
+        self.assertEqual(AUGMENT_HOTKEY, 'F8')
+        window.voice = Mock(value=lambda name, default: 'F8' if name == 'voice/hotkey' else default)
+        self.assertEqual(window.voice_hotkey(), 'F10')        # 예전에 고른 F8은 이제 증강 읽기 키
+        window.navigate(3)
+        with patch.object(window.out_game, 'submit') as submit:
+            window.ask_voice('요즘 탑 뭐가 좋아?')
+        submit.assert_called_once()
+        self.assertEqual(window.stack.currentIndex(), HOME)
+        self.assertEqual(window.out_game.question.text(), '요즘 탑 뭐가 좋아?')
 
     def test_no_game_window_is_explained_without_calling_the_server(self):
         window = self.window()

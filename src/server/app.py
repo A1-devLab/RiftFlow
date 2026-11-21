@@ -256,7 +256,7 @@ def create_app(settings=None, gateway=None, clock=time.time, generate=None, tran
 
     @app.post("/v1/augments/detect")
     def detect_augments(body: ScreenBody, reservation=Depends(ai_device)):
-        """F10으로 찍은 증강 선택 화면에서 증강 이름을 읽는다. AI 사용량 1회."""
+        """F8로 찍은 증강 선택 화면에서 증강 이름을 읽는다. AI 사용량 1회."""
         return ai_call(ai.detect_augments, body, reservation)
 
     @app.get("/v1/augments")
