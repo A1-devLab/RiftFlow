@@ -62,6 +62,16 @@ def transcribe(client, audio):
         return {'text': None, 'message': str(error)}
 
 
+def detect_augments(client, image):
+    """증강 선택 화면 캡처(JPEG 바이트) → {'augments': [...], 'message'}."""
+    import base64
+    try:
+        return client.post_json('/v1/augments/detect', {'image_base64': base64.b64encode(image).decode('ascii')},
+                                timeout=90)
+    except RiotApiError as error:
+        return {'augments': [], 'message': str(error)}
+
+
 def augment_catalog(client):
     """증바람 증강 목록. 서버와 통신하지 못하면 빈 목록."""
     try:

@@ -15,7 +15,7 @@ from game_phases.before_game.runes import recommend_runes
 from game_phases.in_game.augments import recommend_augments
 from game_phases.in_game.desktop import answer_in_game, prompt_player
 from knowledge.augments import catalog_path, ensure_catalog
-from rag import speech
+from rag import speech, vision
 from knowledge.before_game import canonical_champion
 from knowledge.runes import ensure_rune_trees
 from ui.services import ask_general
@@ -29,10 +29,11 @@ class AiService:
     호출 수는 generate를 감싸 직접 센다. 예전에는 '자료 없음'처럼 모델을 부르지 않은 경우도 1회로 셌다.
     """
 
-    def __init__(self, db, knowledge_path, generate, transcribe=None):
+    def __init__(self, db, knowledge_path, generate, transcribe=None, read_screen=None):
         self.db, self.knowledge_path = db, knowledge_path
         self._generate = generate
         self._transcribe = transcribe or speech.transcribe
+        self._read_screen = read_screen or vision.read_augments
         self._calls = threading.local()
 
     def generate(self, prompt, **options):
@@ -123,6 +124,19 @@ class AiService:
             return {'text': self._transcribe(audio), 'message': None}, 1
         except GeminiError as error:
             return {'text': None, 'message': error.message}, 1
+
+    def detect_augments(self, body):
+        """증강 선택 화면 캡처(base64) → 목록에서 찾은 증강들. 캡처는 이름을 읽는 데만 쓰고 저장하지 않는다."""
+        try:
+            image = base64.b64decode(body.get('image_base64') or '', validate=True)
+        except (binascii.Error, ValueError):
+            return {'augments': [], 'message': '캡처 형식을 읽지 못했습니다.'}, 0
+        if not (image.startswith(b'\xff\xd8') or image.startswith(b'\x89PNG')):
+            return {'augments': [], 'message': '캡처 형식을 읽지 못했습니다.'}, 0
+        try:
+            return {'augments': self._read_screen(image, self.augment_catalog()), 'message': None}, 1
+        except GeminiError as error:
+            return {'augments': [], 'message': error.message}, 1
 
     def general(self, body):
         result = ask_general(self.knowledge_path, payloads.text(body.get('question'), 1000), generate=self.generate,

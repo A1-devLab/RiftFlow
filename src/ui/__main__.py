@@ -33,12 +33,13 @@ from .pages.before_game import BeforeGamePage
 from .pages.in_game import InGamePage
 from .logo import BrandLogo, glyph_icon, logo_icon
 from .theme import MODE_NAMES, MODES, theme
-from .voice import DEFAULT_HOTKEY, HOTKEYS, GlobalHotkey, Speaker, VoiceRecorder
+from .voice import DEFAULT_HOTKEY, HOTKEYS, GlobalHotkey, Speaker, VoiceRecorder, beep
 from .match_assets import MatchAssets
 from .portraits import ChampionPortraits
 from .match_detail import MatchDetailDialog
 from .services import ask_general, create_demo, profile_context, sync_database
 from .chat_history import SCREEN_NAMES, ChatHistory
+from .capture import capture_game
 from knowledge.before_game import recent_rune_pages
 
 # 앱 전체에 쓰는 기본 모양. 색은 '@토큰'으로 쓰고 theme이 다크·라이트 값으로 바꿔 넣는다.
@@ -110,6 +111,7 @@ def open_link(url):
 
 
 HOME, PICK, INGAME, CHAT, SETTINGS = range(5)
+AUGMENT_HOTKEY = 'F10'
 # 사이드바 아이콘 (Segoe Fluent Icons / MDL2 글리프): 기록, 사람들, 게임 패드, 대화, 설정
 NAV_GLYPHS = ('\ue81c', '\ue716', '\ue7fc', '\ue8bd', '\ue713')
 NAV_TIPS = ('최근 전적과 AI 채팅', '챔피언 선택 중 픽, 밴, 추천 룬', '게임 중 스코어보드와 추천 아이템',
@@ -190,6 +192,7 @@ class Window(QMainWindow):
         self.poll_job = None
         self.augment_job = None       # 증강 목록 받기. 다른 작업(질문)을 막지 않게 따로 돈다
         self.augment_catalog = []
+        self.pick_mode = None                 # 직전 픽창의 모드. 게임 중 데이터가 증바람을 ARAM으로 줄 때 쓴다
         # 음성 질문: 녹음 → 글자로 바꾸기(작업) → 그 작업이 끝난 뒤 질문(작업) → 답을 소리로 읽기
         self.voice = theme.settings          # 화면 테마와 같은 사용자 설정 파일
         self.recorder = VoiceRecorder(self)
@@ -198,6 +201,10 @@ class Window(QMainWindow):
         self.recorder.failed.connect(self.on_voice_failed)
         self.hotkey = GlobalHotkey(self)
         self.hotkey.pressed.connect(self.toggle_voice)
+        self.augment_hotkey = GlobalHotkey(self, hotkey_id=0x5247)      # F10: 증바람 증강 화면 읽기
+        self.augment_hotkey.pressed.connect(self.read_augment_screen)
+        self.pending_augments = None          # 화면에서 읽은 증강 ID. 지금 작업이 끝나면 추천도를 묻는다
+        self.speak_augments = False           # F10으로 시작한 추천도는 결과를 소리로 읽는다
         self.speaker = Speaker(self)
         self.pending_voice = None             # 받아 적은 질문. 지금 작업이 끝나면 보낸다
         self.speak_next = False               # 다음 답을 소리로 읽을지 (음성으로 물은 질문만)
@@ -388,8 +395,14 @@ class Window(QMainWindow):
             self.on_champ_select((payload['session'], payload['catalog']))
         else:
             self.before_game.show_disconnected()
+        if phase == 'champ_select':
+            self.pick_mode = payload.get('mode') or (self.before_game.view or {}).get('game_mode')
         if phase == 'in_game':
-            self.in_game.show_view(payload['view'])
+            view = payload['view']
+            # 게임 중 데이터는 증바람도 ARAM으로 줄 수 있다. 픽창에서 증바람이었으면 증바람으로 보여 준다.
+            if view.get('game_mode') == 'ARAM' and self.pick_mode == 'KIWI':
+                view = dict(view, game_mode='KIWI', mode_name='증바람')
+            self.in_game.show_view(view)
         elif phase == 'loading':
             self.in_game.show_loading()
         elif previous in ('loading', 'in_game'):
@@ -450,11 +463,14 @@ class Window(QMainWindow):
             ok = self.hotkey.register(hotkey)
             message = (f'게임 중 {hotkey}를 누르고 말하면 질문합니다. 말을 멈추면 자동으로 끝납니다.' if ok else
                        f'{hotkey}는 다른 프로그램이 쓰고 있어 등록하지 못했습니다. 다른 단축키를 골라 주세요.')
+        self.augment_hotkey.unregister()
+        if self.setting('augment_key', True) and not self.augment_hotkey.register(AUGMENT_HOTKEY):
+            message += f' {AUGMENT_HOTKEY}는 다른 프로그램이 쓰고 있어 증강 읽기를 등록하지 못했습니다.'
         self.voice_note.setText(message)
 
     def save_voice_setting(self, name, value):
         self.voice.setValue('voice/' + name, value)
-        if name in ('enabled', 'hotkey'):
+        if name in ('enabled', 'hotkey', 'augment_key'):
             self.apply_voice_settings()
 
     def toggle_voice(self):
@@ -524,6 +540,58 @@ class Window(QMainWindow):
             if text:
                 self.speaker.say(text)
 
+    def read_augment_screen(self):
+        """F10: 게임 모니터를 한 장 찍어 증강 이름을 읽고, 증강 탭에 채운 뒤 추천도를 묻는다."""
+        if self.jobs or self.pending_augments is not None or self.pending_voice is not None:
+            self.status.setText('다른 작업이 끝난 뒤 다시 눌러 주세요.')
+            return
+        if not self.ai_ready():
+            self.status.setText('증강 읽기에 필요한 AI 연결이 없습니다.')
+            return
+        image, message = capture_game()
+        if image is None:
+            self.status.setText(message)
+            if self.setting('speak', True):
+                self.speaker.say(message)
+            return
+        beep(True)
+        self.status.setText('증강 선택 화면을 읽고 있습니다…')
+        server = self.server()
+        if server is not None:
+            from api_client.coach import detect_augments
+            work = lambda: detect_augments(server, image)
+        else:
+            path, known = catalog_path(self.data_dir), list(self.augment_catalog)
+
+            def work():
+                from rag import vision
+                from rag.gemini import GeminiError
+                try:
+                    return {'augments': vision.read_augments(image, known or ensure_catalog(path)), 'message': None}
+                except GeminiError as error:
+                    return {'augments': [], 'message': error.message}
+        self.start_job(work, self.on_augments_read)
+
+    def on_augments_read(self, result):
+        augments = [a for a in (result or {}).get('augments') or [] if isinstance(a, dict) and isinstance(a.get('id'), int)]
+        if len(augments) < 2:
+            message = (result or {}).get('message') or '증강 이름을 읽지 못했습니다. 증강 선택 화면에서 다시 눌러 주세요.'
+            self.status.setText(message)
+            if self.setting('speak', True):
+                self.speaker.say(message)
+            return
+        known = {a['id'] for a in self.augment_catalog}
+        added = [a for a in augments if a['id'] not in known]
+        if added or not self.in_game.augments.catalog:
+            self.augment_catalog += added
+            self.in_game.augments.set_catalog(self.augment_catalog)
+        self.navigate(INGAME)
+        self.in_game.show_tab(1)
+        for combo, augment in zip(self.in_game.augments.choices, augments + [None] * 3):
+            combo.setEditText(augment['name'] if augment else '')
+        self.status.setText('읽은 증강: ' + ', '.join(a['name'] for a in augments))
+        self.pending_augments = [a['id'] for a in augments][:3]   # 읽기 작업이 끝나면(job_done) 추천도를 묻는다
+
     # --- 증바람 증강 추천도
     def load_augments(self):
         """증강 목록을 한 번 받는다. 배포판은 서버가 하루마다 새로 받아 둔 목록을, 개발 모드는 직접 받는다."""
@@ -577,6 +645,10 @@ class Window(QMainWindow):
 
     def show_augment_result(self, result, names):
         self.in_game.augments.show_result(result)
+        if self.speak_augments:
+            self.speak_augments = False
+            if self.setting('speak', True):
+                self.speaker.say(result.get('answer') or result.get('message'))
         self.record_chat('in_game', '증강 추천도: ' + names, result.get('answer') or result.get('message'))
         self.show_transcript(self.in_game.answer, 'in_game')
         self.status.setText('증강 추천도 완료' if result.get('generated') else '증강 추천도 확인 필요')
@@ -637,8 +709,8 @@ class Window(QMainWindow):
         챔피언을 이리저리 올려 보는 동안 호출하지 않도록 두 번의 폴링(약 2.5초) 동안 같아야 부른다.
         같은 조건의 추천은 캐시로 바로 보여 주고, 자동 요청은 조건마다 한 번만 한다(실패해도 반복하지 않음).
         """
-        if not self.ai_ready():
-            return
+        if not self.ai_ready() or self.before_game.no_runes():
+            return                  # 증바람, 아레나는 룬 페이지가 없다
         request = self.before_game._request()
         if not request['champion']:
             self.rune_candidate = None
@@ -907,6 +979,10 @@ class Window(QMainWindow):
         speak.setChecked(self.setting('speak', True))
         speak.toggled.connect(lambda on: self.save_voice_setting('speak', on))
         box.addWidget(speak)
+        augment_key = QCheckBox(f'{AUGMENT_HOTKEY}로 증바람 증강 선택 화면 읽기 (게임 모니터를 한 장 찍어 이름만 읽고 저장하지 않음)')
+        augment_key.setChecked(self.setting('augment_key', True))
+        augment_key.toggled.connect(lambda on: self.save_voice_setting('augment_key', on))
+        box.addWidget(augment_key)
         self.voice_note = label('설정한 단축키는 앱을 켜면 등록됩니다.', 'muted')
         box.addWidget(self.voice_note)
 
@@ -986,6 +1062,10 @@ class Window(QMainWindow):
         if not self.jobs and self.pending_rune_apply is not None:
             # 픽창 시간 안에 끝나야 하므로 전적 새로고침보다 먼저 한다.
             QTimer.singleShot(0, self.run_pending_rune_apply)
+        elif not self.jobs and self.pending_augments is not None:
+            ids, self.pending_augments = self.pending_augments, None
+            self.speak_augments = True
+            QTimer.singleShot(0, lambda: self.ask_augments({'augment_ids': ids, 'view': self.in_game.view}))
         elif not self.jobs and self.pending_voice is not None:
             text, self.pending_voice = self.pending_voice, None
             QTimer.singleShot(0, lambda: self.ask_voice(text))
@@ -1205,6 +1285,7 @@ class Window(QMainWindow):
         if self.login_watcher is not None:
             self.login_watcher.stop()
         self.hotkey.unregister()
+        self.augment_hotkey.unregister()
         self.recorder.cancel('')
         self.speaker.stop()
         for job in (self.poll_job, self.augment_job):
