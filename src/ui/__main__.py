@@ -20,7 +20,7 @@ from rag import llm
 from rag.llm import generate
 from riot import (LiveMatchStatus, get_gameflow_phase, get_match_detail, get_current_summoner, get_live_state,
                   get_recent_history, get_solo_rank, start_login_watcher)
-from game_phases.before_game.desktop import describe_session, answer_before_game, get_before_game_context
+from game_phases.before_game.desktop import describe_session, answer_before_game, get_before_game_context, pick_summary
 from game_phases.before_game.runes import apply_recommended_page, format_explanation, recommend_runes
 from game_phases.in_game.augments import recommend_augments
 from game_phases.in_game.desktop import (RECOMMEND_QUESTION, answer_in_game, describe_scoreboard, get_in_game_context,
@@ -864,7 +864,12 @@ class Window(QMainWindow):
             # 예전에는 빈 챔피언을 서버가 형식 오류(422)로 거절해 '요청이 실패했습니다 (422)'만 보였다.
             self.before_game.answer.setPlainText('공식 자료를 확인하고 있습니다…')
             profile = self.riot_context
-            self.start_job(lambda: self.general_answer(path, request['question'], profile, model, history),
+            # 내 챔피언을 고르기 전이라도 픽창에서 인식한 아군, 상대 조합은 AI에게 같이 넘긴다.
+            # (예전에는 질문만 보내서 '조합을 바탕으로 픽 추천해줘'에 '조합을 알려 달라'고 되물었다.)
+            summary = pick_summary(request.get('view'))
+            summary = summary[:600]               # 서버는 질문을 1,000자까지 받는다. 질문이 잘리지 않게 픽창 정보를 줄인다
+            asked = (summary + '\n\n질문: ' + request['question'])[:1000] if summary else request['question']
+            self.start_job(lambda: self.general_answer(path, asked, profile, model, history),
                            lambda result: self.show_before_game_answer(result, request['question']),
                            on_error=self.before_game.answer.setPlainText)
             return

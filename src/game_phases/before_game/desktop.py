@@ -53,6 +53,42 @@ def describe_session(session, catalog):
             'enemy_bans': [catalog.get(i, {}).get('name', str(i)) for i in session.their_bans]}
 
 
+def pick_summary(view):
+    """내 챔피언을 고르기 전에 묻는 질문에 붙일 픽창 정보. 아군, 상대, 금지 챔피언, 내 포지션을 글로 정리한다.
+    아무도 고르지 않았고 금지도 없으면 빈 문자열."""
+    if not view:
+        return ''
+
+    def team(entries):
+        picked = []
+        for p in entries or []:
+            if not p.get('selected'):
+                continue
+            state = '' if p.get('locked') else '(올려놓음)'
+            lane = '' if p.get('position') in (None, '', '미정') else p['position'] + ' '
+            picked.append(f"{lane}{p['champion']}{state}")
+        return ', '.join(picked) or '아직 없음'
+    mine = view.get('mine') or {}
+    bans = [b for b in (view.get('ally_bans') or []) + (view.get('enemy_bans') or []) if b and b != '0']
+    allies = [p for p in view.get('allies') or [] if p.get('selected')]
+    enemies = [p for p in view.get('enemies') or [] if p.get('selected')]
+    if not (allies or enemies or bans):
+        return ''
+    lines = ['[지금 픽창 정보]']
+    if view.get('mode_name'):
+        lines.append('모드: ' + view['mode_name'])
+    position = mine.get('position')
+    lines.append('내 포지션: ' + (position if position not in (None, '', '미정') else '정해지지 않음'))
+    lines.append('내 챔피언: ' + (mine.get('champion') if mine.get('selected') else '아직 고르지 않음'))
+    lines.append('아군: ' + team(view.get('allies')))
+    lines.append('상대(확정한 챔피언만 보임): ' + team(view.get('enemies')))
+    if bans:
+        lines.append('금지된 챔피언: ' + ', '.join(bans))
+    lines.append('위 픽창 정보를 바탕으로 답한다. 조합이나 픽 추천을 물으면 아군 조합에 부족한 역할과 상대 조합을 고려해 '
+                 '내가 고를 만한 챔피언을 구체적으로 추천하고, 금지되었거나 이미 고른 챔피언은 추천하지 않는다.')
+    return '\n'.join(lines)
+
+
 def opponent_for_lane(view):
     mine = view.get('mine') or {}
     lane = mine.get('position')
