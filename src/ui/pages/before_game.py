@@ -10,6 +10,10 @@ from ui.portraits import ChampionPortraits
 from ui.theme import theme
 
 
+RUNE_PLACEHOLDER = ('픽창에서 챔피언을 올려놓으면 룬을 자동으로 추천하고 클라이언트에 적용합니다. '
+                    '챔피언을 직접 입력했다면 룬 추천을 누르세요.')
+
+
 def label(text, name=None):
     widget = QLabel(text)
     widget.setWordWrap(True)
@@ -137,8 +141,7 @@ class RunePageView(QFrame):
         box = QVBoxLayout(self)
         box.setContentsMargins(14, 10, 14, 10)
         self.stack = QStackedWidget()
-        self.placeholder = label('픽창에서 챔피언을 올려놓으면 룬을 자동으로 추천하고 클라이언트에 적용합니다. '
-                                 '챔피언을 직접 입력했다면 룬 추천을 누르세요.', 'subtle')
+        self.placeholder = label(RUNE_PLACEHOLDER, 'subtle')
         self.stack.addWidget(self.placeholder)
         page = QWidget()
         row = QHBoxLayout(page)
@@ -269,8 +272,21 @@ class BeforeGamePage(QWidget):
         form.addWidget(self.send)
         root.addLayout(form)
 
+    def no_runes(self):
+        """증바람, 아레나처럼 룬 페이지를 쓰지 않는 모드인지."""
+        from game_phases.before_game.runes import NO_RUNE_MODES
+        return self.view.get('game_mode') in NO_RUNE_MODES
+
     def show_session(self, view):
+        was_no_runes = self.no_runes()
         self.view = view
+        if self.no_runes() and not was_no_runes:
+            name = view.get('mode_name') or view.get('game_mode')
+            self.rune_champion, self.rune_page = None, None
+            self.rune_view.show_message('%s에서는 룬 페이지를 쓰지 않아 룬을 추천하지 않습니다. '
+                                        '증강은 게임 중 증강 선택 화면에서 F10을 누르면 읽어서 추천도를 보여 줍니다.' % name)
+        if self.no_runes() != was_no_runes:
+            self._sync_buttons()
         mode = ' · %s' % view['mode_name'] if view.get('mode_name') else ''
         self.state.setText('픽창 연결됨%s · 상대는 확정된 픽만 보입니다.' % mode)
         self._set_live(True)
@@ -301,9 +317,12 @@ class BeforeGamePage(QWidget):
             self.state.style().polish(self.state)
 
     def show_disconnected(self):
+        if self.no_runes():                 # 증바람 안내를 다음 픽창까지 남기지 않는다
+            self.rune_view.show_message(RUNE_PLACEHOLDER)
         self.state.setText('픽창을 기다리고 있습니다. 롤 클라이언트에서 챔피언 선택을 시작하세요.')
         self._set_live(False)
         self.view = {'mine': None, 'allies': [], 'enemies': [], 'ally_bans': [], 'enemy_bans': []}
+        self._sync_buttons()                # 증바람에서 꺼 둔 룬 버튼을 다시 켠다
         self.ally.show_team([])
         self.enemy.show_team([])
         self.bans.setText('확정된 밴 없음')
@@ -333,12 +352,14 @@ class BeforeGamePage(QWidget):
             return
         self.user_requests.append(question)
         self.question.clear()
-        if '룬' in question and self.champion.text().strip():
+        if '룬' in question and self.champion.text().strip() and not self.no_runes():
             self.runeRequested.emit(self._request(question))
         else:
             self.askRequested.emit(self._request(question))
 
     def request_runes(self):
+        if self.no_runes():
+            return
         if not self.champion.text().strip():
             self.rune_view.show_message('내 챔피언을 선택하거나 입력한 뒤 룬 추천을 눌러 주세요.')
             return
@@ -377,9 +398,10 @@ class BeforeGamePage(QWidget):
         self._sync_buttons()
 
     def _sync_buttons(self):
-        for button in (self.send, self.refresh, self.rune_button):
+        for button in (self.send, self.refresh):
             button.setEnabled(not self.busy)
-        self.apply_button.setEnabled(not self.busy and self.rune_page is not None)
+        self.rune_button.setEnabled(not self.busy and not self.no_runes())
+        self.apply_button.setEnabled(not self.busy and self.rune_page is not None and not self.no_runes())
 
     def _rune_champion_changed(self, text):
         if self.rune_champion and text.strip() != self.rune_champion:

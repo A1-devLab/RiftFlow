@@ -67,6 +67,11 @@ class VoiceBody(BaseModel):
     audio_base64: str = Field(min_length=100, max_length=1_000_000)
 
 
+class ScreenBody(BaseModel):
+    # 1600px 너비 JPEG 한 장은 보통 100~400KB, base64로 그 1.4배. 넉넉히 2MB 아래로 받는다.
+    image_base64: str = Field(min_length=100, max_length=2_000_000)
+
+
 class GeneralBody(BaseModel):
     question: str = Field(min_length=1, max_length=1000)
     context: Optional[dict] = None
@@ -138,12 +143,13 @@ def gemini_generator(settings):
                                                      key=settings.gemini_api_key, retries=0, **options))
 
 
-def create_app(settings=None, gateway=None, clock=time.time, generate=None, transcribe=None):
+def create_app(settings=None, gateway=None, clock=time.time, generate=None, transcribe=None, read_screen=None):
     settings = settings or Settings.from_env()
     db = Database(settings.db_path)
     riot = RiotData(db, gateway or RiotGateway(settings), clock=clock)
     ai_enabled = bool(generate or (settings.hasa_api_key if settings.llm_provider == "hasa" else settings.gemini_api_key))
-    ai = AiService(db, settings.knowledge_db_path, generate or gemini_generator(settings), transcribe=transcribe)
+    ai = AiService(db, settings.knowledge_db_path, generate or gemini_generator(settings), transcribe=transcribe,
+                   read_screen=read_screen)
     registrations = defaultdict(deque)
     registrations_lock = threading.Lock()
     # 동시에 처리할 AI 요청 수. 넘으면 기다리지 않고 바로 '잠시 뒤 다시'로 돌려준다.
@@ -247,6 +253,11 @@ def create_app(settings=None, gateway=None, clock=time.time, generate=None, tran
     def voice(body: VoiceBody, reservation=Depends(ai_device)):
         """게임 중 음성 질문을 글자로. AI 사용량 1회로 센다 (질문 답변은 따로 센다)."""
         return ai_call(ai.transcribe, body, reservation)
+
+    @app.post("/v1/augments/detect")
+    def detect_augments(body: ScreenBody, reservation=Depends(ai_device)):
+        """F10으로 찍은 증강 선택 화면에서 증강 이름을 읽는다. AI 사용량 1회."""
+        return ai_call(ai.detect_augments, body, reservation)
 
     @app.get("/v1/augments")
     def augments(_device=Depends(device)):

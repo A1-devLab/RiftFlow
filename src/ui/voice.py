@@ -207,11 +207,11 @@ def parse_hotkey(text):
 class GlobalHotkey(QObject, QAbstractNativeEventFilter):
     """게임 창이 앞에 있어도 눌리는 단축키. pressed 신호를 보낸다. 윈도우가 아니면 아무것도 하지 않는다."""
     pressed = Signal()
-    HOTKEY_ID = 0x5246            # 'RF'
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, hotkey_id=0x5246):
         QObject.__init__(self, parent)
         QAbstractNativeEventFilter.__init__(self)
+        self.hotkey_id = hotkey_id          # 단축키마다 다른 번호 (음성 질문 0x5246 'RF', 증강 읽기 0x5247)
         self.registered = None
         self.installed = False
 
@@ -227,7 +227,7 @@ class GlobalHotkey(QObject, QAbstractNativeEventFilter):
             QCoreApplication.instance().installNativeEventFilter(self)
             self.installed = True
         mods, key = parsed
-        if not ctypes.windll.user32.RegisterHotKey(None, self.HOTKEY_ID, mods | MOD_NOREPEAT, key):
+        if not ctypes.windll.user32.RegisterHotKey(None, self.hotkey_id, mods | MOD_NOREPEAT, key):
             return False
         self.registered = text
         return True
@@ -235,7 +235,7 @@ class GlobalHotkey(QObject, QAbstractNativeEventFilter):
     def unregister(self):
         if self.registered and sys.platform == 'win32':
             import ctypes
-            ctypes.windll.user32.UnregisterHotKey(None, self.HOTKEY_ID)
+            ctypes.windll.user32.UnregisterHotKey(None, self.hotkey_id)
         self.registered = None
 
     def nativeEventFilter(self, event_type, message):
@@ -243,7 +243,7 @@ class GlobalHotkey(QObject, QAbstractNativeEventFilter):
             import ctypes
             from ctypes import wintypes
             msg = wintypes.MSG.from_address(int(message))
-            if msg.message == WM_HOTKEY and msg.wParam == self.HOTKEY_ID:
+            if msg.message == WM_HOTKEY and msg.wParam == self.hotkey_id:
                 QTimer.singleShot(0, self.pressed.emit)
         return False, 0
 

@@ -17,6 +17,9 @@ from riot import get_champ_select_session
 MODE_NAMES = {'CLASSIC': '소환사의 협곡', 'ARAM': '칼바람 나락', 'KIWI': '증바람', 'URF': 'U.R.F.', 'CHERRY': '아레나',
               'ONEFORALL': '단일 챔피언', 'NEXUSBLITZ': '넥서스 돌격', 'ULTBOOK': '궁극기 주문서',
               'PRACTICETOOL': '연습 모드', 'TUTORIAL': '튜토리얼'}
+# 증바람(ARAM: Mayhem) 대기열. 클라이언트가 gameMode를 ARAM으로 줄 수도 있어서 대기열 번호로도 알아본다
+# (CommunityDragon queues.json, 2026-11 기준. 일반, 토너먼트, 'Classic-ish', 사용자 설정 방).
+MAYHEM_QUEUES = {2400, 2401, 2403, 2405, 2410, 2450, 3240, 3270, 3280}
 
 
 def get_before_game_context():
@@ -40,6 +43,8 @@ def describe_session(session, catalog):
                 'locked': locked, 'selected': bool(shown), 'hovering': bool(shown) and not locked}
     mine = next((m for m in session.my_team if m.cell_id == session.local_player_cell_id), None)
     game_mode = getattr(session, 'game_mode', None)
+    if getattr(session, 'queue_id', None) in MAYHEM_QUEUES:
+        game_mode = 'KIWI'
     return {'game_mode': game_mode, 'mode_name': MODE_NAMES.get(game_mode, game_mode) if game_mode else None,
             'mine': entry(mine) if mine else None,
             'allies': [entry(m) for m in session.my_team],
