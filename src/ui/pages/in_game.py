@@ -460,6 +460,7 @@ class InGamePage(QWidget):
     refreshRequested = Signal()
     augmentRequested = Signal(object)       # {'augment_ids': [...], 'view': 현재 스코어보드}
     augmentCatalogRequested = Signal()
+    voiceRequested = Signal()               # 마이크 버튼 (게임 중에는 단축키로도 같은 일을 한다)
 
     def __init__(self, assets=None, portraits=None, parent=None):
         super().__init__(parent)
@@ -551,7 +552,14 @@ class InGamePage(QWidget):
         self.send = QPushButton('질문')
         self.send.setObjectName('primary')
         self.send.clicked.connect(self.submit)
+        self.mic = QPushButton('음성')
+        self.mic.setObjectName('mic')
+        self.mic.setCheckable(True)
+        self.mic.setCursor(Qt.PointingHandCursor)
+        self.mic.setToolTip('눌러서 말하면 질문으로 보냅니다. 게임 중에는 단축키로 쓸 수 있습니다 (설정에서 변경).')
+        self.mic.clicked.connect(lambda: self.voiceRequested.emit())
         form.addWidget(self.question, 1)
+        form.addWidget(self.mic)
         form.addWidget(self.send)
         right.addLayout(form)
         column.addWidget(coach, 1)
@@ -619,8 +627,13 @@ class InGamePage(QWidget):
             self.question.clear()           # 다른 화면처럼 보낸 질문은 지운다 (Enter를 또 눌러 같은 질문이 가지 않게)
 
     def set_busy(self, busy):
-        for widget in (self.send, self.recommend, self.refresh, self.augments.button):
+        for widget in (self.send, self.recommend, self.refresh, self.augments.button, self.mic):
             widget.setEnabled(not busy)
+
+    def set_listening(self, listening):
+        """녹음 중이면 마이크 버튼을 강조하고 다시 누르면 끝난다고 알린다."""
+        self.mic.setChecked(listening)
+        self.mic.setText('듣는 중' if listening else '음성')
 
 
 STYLE = """
@@ -630,6 +643,7 @@ QLabel#subtle { color: @muted; font-size: 12px; }
 QLabel#panelTitle { font-size: 16px; font-weight: 700; }
 QFrame#teamPanel, QFrame#coachPanel, QFrame#itemCard { background: @surface; border: 1px solid @border; border-radius: 12px; }
 QFrame#itemPick { background: @raised; border-radius: 8px; }
+QPushButton#mic:checked { background: @red_soft; color: @red_fg; border-color: @red; }
 QPushButton#tab { background: transparent; color: @muted; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 6px 10px; font-weight: 600; }
 QPushButton#tab:hover { color: @text; }
 QPushButton#tab:checked { color: @accent_fg; border-bottom: 2px solid @accent; }

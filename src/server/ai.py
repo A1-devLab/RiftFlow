@@ -2,16 +2,20 @@
 
 앱이 보낸 임의의 프롬프트를 Gemini로 넘기는 경로는 만들지 않는다. 기능별로 정해진 요청만 받는다.
 """
+import base64
+import binascii
 import json
 import threading
 from pathlib import Path
 
 from game_phases import payloads
+from rag.gemini import GeminiError
 from game_phases.before_game.desktop import answer_before_game
 from game_phases.before_game.runes import recommend_runes
 from game_phases.in_game.augments import recommend_augments
 from game_phases.in_game.desktop import answer_in_game, prompt_player
 from knowledge.augments import catalog_path, ensure_catalog
+from rag import speech
 from knowledge.before_game import canonical_champion
 from knowledge.runes import ensure_rune_trees
 from ui.services import ask_general
@@ -25,9 +29,10 @@ class AiService:
     호출 수는 generate를 감싸 직접 센다. 예전에는 '자료 없음'처럼 모델을 부르지 않은 경우도 1회로 셌다.
     """
 
-    def __init__(self, db, knowledge_path, generate):
+    def __init__(self, db, knowledge_path, generate, transcribe=None):
         self.db, self.knowledge_path = db, knowledge_path
         self._generate = generate
+        self._transcribe = transcribe or speech.transcribe
         self._calls = threading.local()
 
     def generate(self, prompt, **options):
@@ -105,6 +110,19 @@ class AiService:
         result = recommend_augments(self.knowledge_path, payloads.live_view(body.get('view')), offered,
                                     generate=self.generate, prompt_player=prompt_player)
         return result, 1
+
+    def transcribe(self, body):
+        """음성 질문(WAV, base64) → 글자. 음성은 HASA에 넘겨 바꾸는 데만 쓰고 서버에 저장하지 않는다."""
+        try:
+            audio = base64.b64decode(body.get('audio_base64') or '', validate=True)
+        except (binascii.Error, ValueError):
+            return {'text': None, 'message': '음성 형식을 읽지 못했습니다.'}, 0
+        if not audio.startswith(b'RIFF'):
+            return {'text': None, 'message': '음성 형식을 읽지 못했습니다.'}, 0
+        try:
+            return {'text': self._transcribe(audio), 'message': None}, 1
+        except GeminiError as error:
+            return {'text': None, 'message': error.message}, 1
 
     def general(self, body):
         result = ask_general(self.knowledge_path, payloads.text(body.get('question'), 1000), generate=self.generate,

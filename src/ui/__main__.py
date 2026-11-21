@@ -9,7 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import QSize, Qt, QThread, Signal, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QMessageBox,
+    QApplication, QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QMessageBox,
     QLineEdit, QMainWindow, QPushButton, QScrollArea,
     QStackedWidget, QTextBrowser, QVBoxLayout, QWidget,
 )
@@ -33,6 +33,7 @@ from .pages.before_game import BeforeGamePage
 from .pages.in_game import InGamePage
 from .logo import BrandLogo, glyph_icon, logo_icon
 from .theme import MODE_NAMES, MODES, theme
+from .voice import DEFAULT_HOTKEY, HOTKEYS, GlobalHotkey, Speaker, VoiceRecorder
 from .match_assets import MatchAssets
 from .portraits import ChampionPortraits
 from .match_detail import MatchDetailDialog
@@ -189,6 +190,17 @@ class Window(QMainWindow):
         self.poll_job = None
         self.augment_job = None       # 증강 목록 받기. 다른 작업(질문)을 막지 않게 따로 돈다
         self.augment_catalog = []
+        # 음성 질문: 녹음 → 글자로 바꾸기(작업) → 그 작업이 끝난 뒤 질문(작업) → 답을 소리로 읽기
+        self.voice = theme.settings          # 화면 테마와 같은 사용자 설정 파일
+        self.recorder = VoiceRecorder(self)
+        self.recorder.started.connect(self.on_voice_started)
+        self.recorder.finished.connect(self.on_voice_audio)
+        self.recorder.failed.connect(self.on_voice_failed)
+        self.hotkey = GlobalHotkey(self)
+        self.hotkey.pressed.connect(self.toggle_voice)
+        self.speaker = Speaker(self)
+        self.pending_voice = None             # 받아 적은 질문. 지금 작업이 끝나면 보낸다
+        self.speak_next = False               # 다음 답을 소리로 읽을지 (음성으로 물은 질문만)
         self.phase = 'idle'
         self.rune_cache = {}          # 같은 챔피언·상대·성향이면 다시 부르지 않는다 (Gemini 하루 호출 한도)
         self.rune_candidate = None    # 직전 폴링에서 본 조건. 두 번 연속 같으면 자동 추천
@@ -326,6 +338,7 @@ class Window(QMainWindow):
         self.in_game.refreshRequested.connect(self.poll_champ_select)
         self.in_game.augmentRequested.connect(self.ask_augments)
         self.in_game.augmentCatalogRequested.connect(self.load_augments)
+        self.in_game.voiceRequested.connect(self.toggle_voice)
         self.stack.addWidget(self.in_game)
 
     def poll_champ_select(self):
@@ -422,6 +435,95 @@ class Window(QMainWindow):
             work,
             lambda result: self.show_in_game_answer(result, question), on_error=self.in_game.answer.setPlainText)
 
+    # --- 음성 질문
+    def setting(self, name, default):
+        value = self.voice.value('voice/' + name, default)
+        return value if not isinstance(default, bool) else str(value).lower() in ('true', '1')
+
+    def apply_voice_settings(self):
+        """단축키를 등록한다. 앱을 켤 때(main)와 설정을 바꿀 때만 부른다 (테스트에서 창을 만들 때는 등록하지 않는다)."""
+        enabled = self.setting('enabled', True)
+        hotkey = self.setting('hotkey', DEFAULT_HOTKEY)
+        self.hotkey.unregister()
+        message = '음성 질문을 끄면 단축키도 해제됩니다.'
+        if enabled:
+            ok = self.hotkey.register(hotkey)
+            message = (f'게임 중 {hotkey}를 누르고 말하면 질문합니다. 말을 멈추면 자동으로 끝납니다.' if ok else
+                       f'{hotkey}는 다른 프로그램이 쓰고 있어 등록하지 못했습니다. 다른 단축키를 골라 주세요.')
+        self.voice_note.setText(message)
+
+    def save_voice_setting(self, name, value):
+        self.voice.setValue('voice/' + name, value)
+        if name in ('enabled', 'hotkey'):
+            self.apply_voice_settings()
+
+    def toggle_voice(self):
+        """단축키나 마이크 버튼. 녹음 중이면 끝내고, 아니면 시작한다."""
+        if self.recorder.recording:
+            self.recorder.stop()
+            return
+        self.in_game.set_listening(False)
+        if self.jobs or self.pending_voice is not None:
+            self.status.setText('다른 작업이 끝난 뒤 다시 눌러 주세요.')
+            return
+        if not self.ai_ready():
+            self.status.setText('음성 질문에 필요한 AI 연결이 없습니다.')
+            return
+        self.recorder.start()
+
+    def on_voice_started(self):
+        self.in_game.set_listening(True)
+        self.status.setText('듣고 있습니다. 말을 멈추면 자동으로 질문합니다.')
+
+    def on_voice_failed(self, message):
+        self.in_game.set_listening(False)
+        if message:
+            self.status.setText(message)
+
+    def on_voice_audio(self, audio):
+        self.in_game.set_listening(False)
+        self.status.setText('음성을 글자로 바꾸고 있습니다…')
+        server = self.server()
+        if server is not None:
+            from api_client.coach import transcribe
+            work = lambda: transcribe(server, audio)
+        else:
+            def work():
+                from rag import speech
+                from rag.gemini import GeminiError
+                try:
+                    return {'text': speech.transcribe(audio), 'message': None}
+                except GeminiError as error:
+                    return {'text': None, 'message': error.message}
+        self.start_job(work, self.on_voice_text)
+
+    def on_voice_text(self, result):
+        text = (result or {}).get('text')
+        if not text:
+            message = (result or {}).get('message') or '목소리를 알아듣지 못했습니다.'
+            self.status.setText(message)
+            if self.setting('speak', True):
+                self.speaker.say(message)
+            return
+        self.pending_voice = text           # 받아 적기 작업이 끝나면(job_done) 질문으로 보낸다
+
+    def ask_voice(self, text):
+        """받아 적은 질문을 게임 중이면 인게임 AI에, 아니면 일반 AI 질문에 보낸다."""
+        self.speak_next = self.setting('speak', True)
+        if self.phase in ('in_game', 'loading') or self.in_game.view.get('in_game'):
+            self.in_game.question.setText(text)
+            self.in_game.submit()
+        else:
+            self.out_game.question.setText(text)
+            self.out_game.submit()
+        self.status.setText('음성 질문: ' + text)
+
+    def speak_answer(self, text):
+        if self.speak_next:
+            self.speak_next = False
+            if text:
+                self.speaker.say(text)
+
     # --- 증바람 증강 추천도
     def load_augments(self):
         """증강 목록을 한 번 받는다. 배포판은 서버가 하루마다 새로 받아 둔 목록을, 개발 모드는 직접 받는다."""
@@ -484,6 +586,7 @@ class Window(QMainWindow):
             self.in_game.items.show_result(result)     # 아이템 추천은 대화창이 아니라 추천 칸에 보여 준다
         self.record_chat('in_game', question, result.get('answer') or result.get('message'))
         self.show_transcript(self.in_game.answer, 'in_game')
+        self.speak_answer(result.get('answer') or result.get('message'))
         self.status.setText('인게임 답변 완료' if result['generated'] else '인게임 자료 확인 필요')
 
     # --- AI 대화 기록
@@ -783,6 +886,30 @@ class Window(QMainWindow):
         self.theme_mode.setMaximumWidth(320)
         box.addWidget(self.theme_mode)
 
+        box = self.card(layout, '음성 질문', '게임 중 단축키를 누르고 말하면 질문하고, 답을 소리로 읽어 줍니다. '
+                                          '음성은 글자로 바꾸는 데만 쓰고 저장하지 않습니다 (HASA 음성 인식).')
+        enabled = QCheckBox('음성 질문 사용')
+        enabled.setChecked(self.setting('enabled', True))
+        enabled.toggled.connect(lambda on: self.save_voice_setting('enabled', on))
+        box.addWidget(enabled)
+        row = QHBoxLayout()
+        row.addWidget(label('단축키', 'muted'))
+        self.hotkey_choice = QComboBox()
+        self.hotkey_choice.addItems(HOTKEYS)
+        current = self.setting('hotkey', DEFAULT_HOTKEY)
+        self.hotkey_choice.setCurrentIndex(HOTKEYS.index(current) if current in HOTKEYS else 0)
+        self.hotkey_choice.currentTextChanged.connect(lambda text: self.save_voice_setting('hotkey', text))
+        self.hotkey_choice.setMaximumWidth(220)
+        row.addWidget(self.hotkey_choice)
+        row.addStretch()
+        box.addLayout(row)
+        speak = QCheckBox('답을 소리로 읽어 주기 (윈도우 한국어 음성)')
+        speak.setChecked(self.setting('speak', True))
+        speak.toggled.connect(lambda on: self.save_voice_setting('speak', on))
+        box.addWidget(speak)
+        self.voice_note = label('설정한 단축키는 앱을 켜면 등록됩니다.', 'muted')
+        box.addWidget(self.voice_note)
+
         box = self.card(layout, '고급', 'AI 모델 ID를 비워 두면 기본 모델을 씁니다. '
                                       'API 키는 .env에서 관리하고, 실제 키는 채팅이나 GitHub에 올리지 마세요.')
         self.model = QLineEdit(llm.default_model())
@@ -859,6 +986,9 @@ class Window(QMainWindow):
         if not self.jobs and self.pending_rune_apply is not None:
             # 픽창 시간 안에 끝나야 하므로 전적 새로고침보다 먼저 한다.
             QTimer.singleShot(0, self.run_pending_rune_apply)
+        elif not self.jobs and self.pending_voice is not None:
+            text, self.pending_voice = self.pending_voice, None
+            QTimer.singleShot(0, lambda: self.ask_voice(text))
         elif not self.jobs and self.pending_riot_player is not None:
             player = self.pending_riot_player
             self.pending_riot_player = None
@@ -870,6 +1000,7 @@ class Window(QMainWindow):
         예전에는 모든 실패를 네 화면에 한꺼번에 써서, 룬 적용 실패가 픽창 대화와 AI 질문 화면을 덮어썼다.
         """
         self.status.setText(message)
+        self.speak_answer(message)
 
     def ask_out_game(self, question):
         if self.jobs:
@@ -901,6 +1032,7 @@ class Window(QMainWindow):
         self.record_chat('general', question, self.answer_text(result))
         self.render_general()
         self.out_game.show_answer(result)
+        self.speak_answer(self.answer_text(result))
         self.status.setText('완료 · ' + ('AI 답변' if result.get('generated') else '공식 자료 검색'))
 
     def riot_profile(self, player=None):
@@ -1072,6 +1204,9 @@ class Window(QMainWindow):
         self.champ_timer.stop()
         if self.login_watcher is not None:
             self.login_watcher.stop()
+        self.hotkey.unregister()
+        self.recorder.cancel('')
+        self.speaker.stop()
         for job in (self.poll_job, self.augment_job):
             if job is not None and job.isRunning():
                 job.finished.connect(self.close)
@@ -1118,6 +1253,7 @@ def main():
     theme.style(app, STYLE)
     window = Window(args.data_dir, auto_sync=getattr(sys, 'frozen', False) and not args.screenshot)
     window.show()
+    window.apply_voice_settings()
     if args.screenshot:
         def capture():
             args.screenshot.parent.mkdir(parents=True, exist_ok=True)
