@@ -33,7 +33,7 @@ from .pages.before_game import BeforeGamePage
 from .pages.in_game import InGamePage
 from .logo import BrandLogo, glyph_icon, logo_icon
 from .theme import MODE_NAMES, MODES, theme
-from .voice import DEFAULT_HOTKEY, HOTKEYS, GlobalHotkey, Speaker, VoiceRecorder, beep
+from .voice import DEFAULT_HOTKEY, HOTKEYS, GlobalHotkey, MicTester, Speaker, VoiceRecorder, beep, input_devices
 from .match_assets import MatchAssets
 from .portraits import ChampionPortraits
 from .match_detail import MatchDetailDialog
@@ -196,6 +196,7 @@ class Window(QMainWindow):
         # 음성 질문: 녹음 → 글자로 바꾸기(작업) → 그 작업이 끝난 뒤 질문(작업) → 답을 소리로 읽기
         self.voice = theme.settings          # 화면 테마와 같은 사용자 설정 파일
         self.recorder = VoiceRecorder(self)
+        self.recorder.mic = self.setting('mic', '') or None
         self.recorder.started.connect(self.on_voice_started)
         self.recorder.finished.connect(self.on_voice_audio)
         self.recorder.failed.connect(self.on_voice_failed)
@@ -470,8 +471,25 @@ class Window(QMainWindow):
 
     def save_voice_setting(self, name, value):
         self.voice.setValue('voice/' + name, value)
+        if name == 'mic':
+            self.recorder.mic = value or None
         if name in ('enabled', 'hotkey', 'augment_key'):
             self.apply_voice_settings()
+
+    def test_mic(self):
+        if self.recorder.recording:
+            return
+        if not hasattr(self, 'mic_tester'):
+            self.mic_tester = MicTester(self)
+            self.mic_tester.finished.connect(self.on_mic_tested)
+        self.mic_test.setEnabled(False)
+        self.mic_result.setText('듣고 있습니다… 3초 동안 평소처럼 말해 보세요.')
+        self.mic_result.show()
+        self.mic_tester.start(self.recorder.mic)
+
+    def on_mic_tested(self, message):
+        self.mic_test.setEnabled(True)
+        self.mic_result.setText(message)
 
     def toggle_voice(self):
         """단축키나 마이크 버튼. 녹음 중이면 끝내고, 아니면 시작한다."""
@@ -975,6 +993,34 @@ class Window(QMainWindow):
         row.addWidget(self.hotkey_choice)
         row.addStretch()
         box.addLayout(row)
+        row = QHBoxLayout()
+        row.addWidget(label('마이크', 'muted'))
+        self.mic_choice = QComboBox()
+        self.mic_choice.addItem('윈도우 기본 마이크', '')
+        try:
+            names = input_devices()
+        except Exception:                    # 오디오 모듈을 못 쓰는 환경
+            names = []
+        for name in names:
+            self.mic_choice.addItem(name, name)
+        saved = self.setting('mic', '')
+        if saved and self.mic_choice.findData(saved) < 0:
+            self.mic_choice.addItem(saved + ' (연결 안 됨)', saved)
+        self.mic_choice.setCurrentIndex(max(0, self.mic_choice.findData(saved)))
+        self.mic_choice.currentIndexChanged.connect(
+            lambda index: self.save_voice_setting('mic', self.mic_choice.itemData(index) or ''))
+        self.mic_choice.setMaximumWidth(320)
+        row.addWidget(self.mic_choice)
+        self.mic_test = QPushButton('마이크 테스트')
+        self.mic_test.setToolTip('누르고 3초 동안 평소처럼 말해 보세요. 소리 크기만 재고 저장하지 않습니다.')
+        self.mic_test.clicked.connect(self.test_mic)
+        row.addWidget(self.mic_test)
+        row.addStretch()
+        box.addLayout(row)
+        self.mic_result = label('', 'muted')
+        self.mic_result.setWordWrap(True)
+        self.mic_result.hide()
+        box.addWidget(self.mic_result)
         speak = QCheckBox('답을 소리로 읽어 주기 (윈도우 한국어 음성)')
         speak.setChecked(self.setting('speak', True))
         speak.toggled.connect(lambda on: self.save_voice_setting('speak', on))

@@ -19,7 +19,10 @@ MAX_SECONDS = 10
 MAX_LEVEL = 0.06             # 말소리 기준의 최댓값 (시끄러운 방에서도 이보다 크게는 잡지 않는다)
 SILENCE_STOP = 1.2           # 말이 끝나고 이만큼 조용하면 녹음을 끝낸다
 NO_SPEECH_STOP = 4.0         # 이만큼 기다려도 말이 없으면 끝낸다
-SPEECH_LEVEL = 0.03          # 말소리로 보는 최소 음량 (전체 음량 대비 RMS). 방이 시끄러우면 더 올라간다
+SPEECH_LEVEL = 0.004         # 말소리로 보는 최소 음량 (전체 음량 대비 RMS). 웹캠 마이크처럼 작게 들어오는 마이크도
+                             # 잡히게 낮게 두고, 실제 기준은 방 소음의 4배로 정한다 (시끄러우면 올라간다)
+TARGET_PEAK = 0.7            # 작게 녹음된 소리는 음성 인식에 보내기 전에 이 높이까지 키운다
+MAX_GAIN = 20.0
 HOTKEYS = ('Ctrl+Shift+V', 'Ctrl+Alt+V', 'F8', 'F9')
 DEFAULT_HOTKEY = HOTKEYS[0]
 MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_NOREPEAT = 0x1, 0x2, 0x4, 0x4000
@@ -86,6 +89,39 @@ def wav_bytes(pcm, rate=SAMPLE_RATE, channels=1):
     return buffer.getvalue()
 
 
+def louder(pcm, target=TARGET_PEAK, max_gain=MAX_GAIN):
+    """작게 녹음된 16비트 소리를 키운다. 가장 큰 소리가 target이 되게, 최대 max_gain배. 이미 크면 그대로 둔다."""
+    samples = array.array('h', pcm[:len(pcm) - len(pcm) % 2])
+    peak = max((abs(s) for s in samples), default=0)
+    if not peak:
+        return bytes(pcm)
+    gain = min(max_gain, target * 32767 / peak)
+    if gain < 1.5:
+        return bytes(pcm)
+    return array.array('h', (max(-32768, min(32767, int(s * gain))) for s in samples)).tobytes()
+
+
+def input_devices():
+    """마이크 이름 목록. 윈도우 기본 마이크가 먼저 온다."""
+    from PySide6.QtMultimedia import QMediaDevices
+    default = QMediaDevices.defaultAudioInput()
+    names = [d.description() for d in QMediaDevices.audioInputs()]
+    if not default.isNull() and default.description() in names:
+        names.remove(default.description())
+        names.insert(0, default.description())
+    return names
+
+
+def find_input(name=None):
+    """이름이 같은 마이크, 없거나 비어 있으면 윈도우 기본 마이크."""
+    from PySide6.QtMultimedia import QMediaDevices
+    if name:
+        for device in QMediaDevices.audioInputs():
+            if device.description() == name:
+                return device
+    return QMediaDevices.defaultAudioInput()
+
+
 def beep(start=True):
     """녹음 시작(높은 음), 끝(낮은 음). 게임 화면에서도 들리게 소리로만 알린다."""
     if sys.platform != 'win32':
@@ -105,6 +141,8 @@ class VoiceRecorder(QObject):
         self.source = self.device = self.gate = None
         self.opening = False
         self.pcm = bytearray()
+        self.mic = None                     # 설정에서 고른 마이크 이름. None이면 윈도우 기본 마이크
+        self.mic_name = ''                  # 지금 녹음하는 마이크 (안내 문장에 쓴다)
 
     @property
     def recording(self):
@@ -122,8 +160,9 @@ class VoiceRecorder(QObject):
         if not self.opening:            # 여는 사이 취소됐다
             return
         self.opening = False
-        from PySide6.QtMultimedia import QAudioFormat, QAudioSource, QMediaDevices
-        device = QMediaDevices.defaultAudioInput()
+        from PySide6.QtMultimedia import QAudioFormat, QAudioSource
+        device = find_input(self.mic)
+        self.mic_name = device.description()
         fmt = QAudioFormat()
         fmt.setSampleRate(SAMPLE_RATE)
         fmt.setChannelCount(1)
@@ -155,7 +194,7 @@ class VoiceRecorder(QObject):
         if state == 'done':
             self.stop()
         elif state == 'no_speech':
-            self.cancel('목소리가 들리지 않아 녹음을 멈췄습니다.')
+            self.cancel(self.no_voice_message('목소리가 들리지 않아 녹음을 멈췄습니다.'))
 
     def _close(self):
         self.opening = False
@@ -172,15 +211,90 @@ class VoiceRecorder(QObject):
         self._close()
         beep(False)
         if heard:
-            self.finished.emit(wav_bytes(bytes(self.pcm)))
+            self.finished.emit(wav_bytes(louder(bytes(self.pcm))))
         else:
-            self.failed.emit('목소리가 들리지 않았습니다. 단축키를 누르고 바로 말해 주세요.')
+            self.failed.emit(self.no_voice_message('목소리가 들리지 않았습니다. 단축키를 누르고 바로 말해 주세요.'))
+
+    def no_voice_message(self, text):
+        if not self.mic_name:
+            return text
+        return f'{text} (마이크: {self.mic_name}) 말하는 마이크가 아니면 설정 > 음성 질문에서 바꿔 주세요.'
 
     def cancel(self, message):
         if self.recording:
             self._close()
             beep(False)
             self.failed.emit(message)
+
+
+def mic_report(levels, seconds_per_chunk=0.1):
+    """마이크 테스트 결과 문장. levels는 0.1초마다 잰 음량. 앞 0.3초를 방 소음으로 보고 녹음 때와 같은 기준으로 판단한다."""
+    if not levels:
+        return '마이크에서 소리가 들어오지 않았습니다. 윈도우 소리 설정에서 마이크가 켜져 있는지 확인해 주세요.'
+    gate = SilenceGate(no_speech=1e9, limit=1e9, silence=1e9)
+    for level in levels:
+        gate.feed(level, seconds_per_chunk)
+    peak = max(levels)
+    if gate.heard:
+        return '목소리가 잘 들립니다 (가장 큰 소리 %.3f, 기준 %.3f).' % (peak, gate.threshold())
+    if peak < 0.002:
+        return ('거의 아무 소리도 들어오지 않습니다 (가장 큰 소리 %.4f). 다른 마이크를 고르거나 '
+                '윈도우 소리 설정 > 입력에서 마이크 볼륨을 올려 주세요.' % peak)
+    return ('목소리가 작게 들어옵니다 (가장 큰 소리 %.3f, 기준 %.3f). 마이크에 더 가까이 말하거나 '
+            '윈도우 소리 설정 > 입력에서 마이크 볼륨을 올려 주세요.' % (peak, gate.threshold()))
+
+
+class MicTester(QObject):
+    """고른 마이크로 몇 초 녹음해서 음량만 잰다. 소리는 저장하거나 보내지 않는다. finished(결과 문장)."""
+    finished = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.source = self.device = None
+        self.levels, self.buffer = [], bytearray()
+
+    @property
+    def running(self):
+        return self.source is not None
+
+    def start(self, mic=None, seconds=3):
+        if self.running:
+            return
+        from PySide6.QtMultimedia import QAudioFormat, QAudioSource
+        device = find_input(mic)
+        fmt = QAudioFormat()
+        fmt.setSampleRate(SAMPLE_RATE)
+        fmt.setChannelCount(1)
+        fmt.setSampleFormat(QAudioFormat.Int16)
+        if device.isNull():
+            self.finished.emit('마이크를 찾지 못했습니다.')
+            return
+        self.levels, self.buffer = [], bytearray()
+        self.source = QAudioSource(device, fmt, self)
+        self.device = self.source.start()
+        if self.device is None:
+            self.source = None
+            self.finished.emit('마이크를 열지 못했습니다. 다른 프로그램이 마이크를 쓰고 있는지 확인해 주세요.')
+            return
+        self.device.readyRead.connect(self._read)
+        QTimer.singleShot(int(seconds * 1000), self._done)
+
+    def _read(self):
+        if self.device is None:
+            return
+        self.buffer += bytes(self.device.readAll())
+        step = SAMPLE_RATE // 10 * 2                 # 0.1초
+        while len(self.buffer) >= step:
+            self.levels.append(rms_int16(bytes(self.buffer[:step])))
+            del self.buffer[:step]
+
+    def _done(self):
+        if self.source is None:
+            return
+        source, self.source, self.device = self.source, None, None
+        source.stop()
+        source.deleteLater()
+        self.finished.emit(mic_report(self.levels))
 
 
 def parse_hotkey(text):
