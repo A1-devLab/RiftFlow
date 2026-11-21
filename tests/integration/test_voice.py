@@ -12,7 +12,9 @@ from unittest.mock import Mock, patch
 
 from rag import speech
 from rag.gemini import GeminiError
-from ui.voice import MOD_CONTROL, MOD_SHIFT, SilenceGate, parse_hotkey, rms_int16, spoken_text, wav_bytes
+import array
+
+from ui.voice import MOD_CONTROL, MOD_SHIFT, SilenceGate, VoiceRecorder, louder, mic_report, parse_hotkey, rms_int16, spoken_text, wav_bytes
 
 HAS_SERVER = all(importlib.util.find_spec(name) for name in ("fastapi", "httpx"))
 WAV = wav_bytes(b'\x10\x00' * 1600)          # 0.1초짜리 WAV
@@ -57,6 +59,39 @@ class RecordingTests(unittest.TestCase):
         self.assertAlmostEqual(noisy.threshold(), 0.06)
         noisy.feed(0.05, 0.5)
         self.assertFalse(noisy.heard)
+
+    def test_a_quiet_webcam_mic_still_hears_speech(self):
+        quiet = SilenceGate(no_speech=4.0)                # 실제로 잰 웹캠 마이크: 방 소음 0.0004, 말소리 0.01 안팎
+        quiet.feed(0.0004, 0.3)
+        quiet.feed(0.01, 0.4)
+        self.assertTrue(quiet.heard)
+        silent = SilenceGate(no_speech=4.0)
+        silent.feed(0.0004, 0.3)
+        for _ in range(10):                               # 가끔 튀는 소리(0.005, 0.1초)는 말이 아니다
+            silent.feed(0.005, 0.1)
+            silent.feed(0.0004, 0.2)
+        self.assertFalse(silent.heard)
+
+    def test_quiet_recordings_are_made_louder_before_recognition(self):
+        quiet = array.array('h', [300, -300, 150, 0] * 100).tobytes()
+        loud = array.array('h', louder(quiet))
+        self.assertEqual(max(abs(s) for s in loud), int(300 * 20))   # 최대 20배
+        normal = array.array('h', [20000, -20000] * 10).tobytes()
+        self.assertEqual(louder(normal), normal)
+        self.assertEqual(louder(b''), b'')
+
+    def test_no_voice_message_names_the_microphone(self):
+        recorder = VoiceRecorder()
+        self.assertEqual(recorder.no_voice_message('안 들림.'), '안 들림.')
+        recorder.mic_name = '마이크(Full HD webcam)'
+        self.assertIn('Full HD webcam', recorder.no_voice_message('안 들림.'))
+        self.assertIn('설정 > 음성 질문', recorder.no_voice_message('안 들림.'))
+
+    def test_mic_test_report(self):
+        self.assertIn('잘 들립니다', mic_report([0.0004] * 3 + [0.02] * 5 + [0.0004] * 22))
+        self.assertIn('작게', mic_report([0.0004] * 3 + [0.003] * 27))
+        self.assertIn('아무 소리도', mic_report([0.0003] * 30))
+        self.assertIn('들어오지 않았습니다', mic_report([]))
 
     def test_level_and_wav_header(self):
         self.assertEqual(rms_int16(b''), 0.0)
