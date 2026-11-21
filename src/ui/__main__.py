@@ -33,7 +33,7 @@ from .pages.before_game import BeforeGamePage
 from .pages.in_game import InGamePage
 from .logo import BrandLogo, glyph_icon, logo_icon
 from .theme import MODE_NAMES, MODES, theme
-from .voice import DEFAULT_HOTKEY, HOTKEYS, GlobalHotkey, MicTester, Speaker, VoiceRecorder, beep, input_devices
+from .voice import DEFAULT_HOTKEY, HOTKEYS, GlobalHotkey, MicTester, Speaker, VoiceRecorder, beep, input_devices, spoken_text
 from .match_assets import MatchAssets
 from .portraits import ChampionPortraits
 from .match_detail import MatchDetailDialog
@@ -207,6 +207,10 @@ class Window(QMainWindow):
         self.pending_augments = None          # 화면에서 읽은 증강 ID. 지금 작업이 끝나면 추천도를 묻는다
         self.speak_augments = False           # 단축키로 시작한 추천도는 결과를 소리로 읽는다
         self.speaker = Speaker(self)
+        from .overlay import GameOverlay
+        self.overlay = GameOverlay()          # 게임 화면 위 안내 카드 (알트탭 없이 음성 질문, F8 결과 보기)
+        self.overlay.enabled = self.setting('overlay', True)
+        self.overlay_next = False             # 다음 답을 오버레이에 띄울지 (음성으로 물은 질문만)
         self.pending_voice = None             # 받아 적은 질문. 지금 작업이 끝나면 보낸다
         self.speak_next = False               # 다음 답을 소리로 읽을지 (음성으로 물은 질문만)
         self.phase = 'idle'
@@ -479,6 +483,10 @@ class Window(QMainWindow):
 
     def save_voice_setting(self, name, value):
         self.voice.setValue('voice/' + name, value)
+        if name == 'overlay':
+            self.overlay.enabled = bool(value)
+            if not value:
+                self.overlay.hide()
         if name == 'mic':
             self.recorder.mic = value or None
         if name in ('enabled', 'hotkey', 'augment_key'):
@@ -525,6 +533,10 @@ class Window(QMainWindow):
         """음성 질문 진행 상황을 그 대화창에 글로 쓴 질문처럼 내 말풍선으로 보여 준다.
         error가 있으면 진행 말풍선을 지우고 AI 쪽 안내로 남긴다."""
         target = self.voice_target()
+        if error:
+            self.overlay.show_card('RiftFlow 음성 질문', error)
+        elif text:
+            self.overlay.show_card('RiftFlow 음성 질문', text, sticky=True)
         self.navigate({'in_game': INGAME, 'pick': PICK, 'home': HOME}[target])
         if target == 'home':
             self.out_game.set_voice_bubble(text)
@@ -585,6 +597,9 @@ class Window(QMainWindow):
     def ask_voice(self, text):
         """받아 적은 질문을 글로 쓴 것처럼 그 화면의 대화창에 보낸다 (인게임, 픽창, 전적 화면)."""
         self.speak_next = self.setting('speak', True)
+        self.overlay_next = True
+        self.overlay_question = text
+        self.overlay.show_card('RiftFlow 음성 질문', '답을 준비하고 있습니다…', question=text, sticky=True)
         target = self.voice_target()
         if target == 'in_game':
             self.navigate(INGAME)
@@ -601,6 +616,10 @@ class Window(QMainWindow):
         self.status.setText('음성 질문: ' + text)
 
     def speak_answer(self, text):
+        if self.overlay_next:
+            self.overlay_next = False
+            if text:
+                self.overlay.show_card('RiftFlow 답변', spoken_text(text), question=getattr(self, 'overlay_question', None))
         if self.speak_next:
             self.speak_next = False
             if text:
@@ -622,6 +641,7 @@ class Window(QMainWindow):
             return
         beep(True)
         self.status.setText('증강 선택 화면을 읽고 있습니다…')
+        self.overlay.show_card('RiftFlow 증강 추천도', '증강 선택 화면을 읽고 있습니다…', sticky=True)
         server = self.server()
         if server is not None:
             from api_client.coach import detect_augments
@@ -643,6 +663,7 @@ class Window(QMainWindow):
         if len(augments) < 2:
             message = (result or {}).get('message') or '증강 이름을 읽지 못했습니다. 증강 선택 화면에서 다시 눌러 주세요.'
             self.status.setText(message)
+            self.overlay.show_card('RiftFlow 증강 추천도', message)
             if self.setting('speak', True):
                 self.speaker.say(message)
             return
@@ -656,6 +677,8 @@ class Window(QMainWindow):
         for combo, augment in zip(self.in_game.augments.choices, augments + [None] * 3):
             combo.setEditText(augment['name'] if augment else '')
         self.status.setText('읽은 증강: ' + ', '.join(a['name'] for a in augments))
+        self.overlay.show_card('RiftFlow 증강 추천도', '추천도를 계산하고 있습니다…',
+                               question=', '.join(a['name'] for a in augments[:3]), sticky=True)
         self.pending_augments = [a['id'] for a in augments][:3]   # 읽기 작업이 끝나면(job_done) 추천도를 묻는다
 
     # --- 증바람 증강 추천도
@@ -713,6 +736,8 @@ class Window(QMainWindow):
         self.in_game.augments.show_result(result)
         if self.speak_augments:
             self.speak_augments = False
+            self.overlay.show_card('RiftFlow 증강 추천도', result.get('answer') or result.get('message') or '',
+                                   question=names or None)
             if self.setting('speak', True):
                 self.speaker.say(result.get('answer') or result.get('message'))
         self.record_chat('in_game', '증강 추천도: ' + names, result.get('answer') or result.get('message'))
@@ -952,6 +977,7 @@ class Window(QMainWindow):
     def show_before_game_answer(self, result, question=None):
         self.record_chat('pick', question, self.answer_text(result) or '답변을 받지 못했습니다.')
         self.show_transcript(self.before_game.answer, 'pick')
+        self.speak_answer(self.answer_text(result))
         self.status.setText('픽창 답변 완료' if result.get('generated') else '픽창 자료 확인 필요')
 
     def make_chat(self):
@@ -1072,6 +1098,10 @@ class Window(QMainWindow):
         speak.setChecked(self.setting('speak', True))
         speak.toggled.connect(lambda on: self.save_voice_setting('speak', on))
         box.addWidget(speak)
+        overlay = QCheckBox('게임 화면 위에 질문과 답 띄우기 (알트탭 없이 보기, 롤 화면 모드가 테두리 없음일 때 보임)')
+        overlay.setChecked(self.setting('overlay', True))
+        overlay.toggled.connect(lambda on: self.save_voice_setting('overlay', on))
+        box.addWidget(overlay)
         augment_key = QCheckBox(f'{AUGMENT_HOTKEY}로 증바람 증강 선택 화면 읽기 (게임 모니터를 한 장 찍어 이름만 읽고 저장하지 않음)')
         augment_key.setChecked(self.setting('augment_key', True))
         augment_key.toggled.connect(lambda on: self.save_voice_setting('augment_key', on))
@@ -1379,6 +1409,7 @@ class Window(QMainWindow):
             self.login_watcher.stop()
         self.hotkey.unregister()
         self.augment_hotkey.unregister()
+        self.overlay.close()
         self.recorder.cancel('')
         self.speaker.stop()
         for job in (self.poll_job, self.augment_job):
