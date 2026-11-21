@@ -2,7 +2,13 @@
 # Caddy가 Let's Encrypt 인증서를 자동으로 받아 HTTPS를 처리하고, 요청을 RiftFlow 서버로 넘긴다.
 DOMAIN {
 	encode gzip
-	request_body {
+	# 음성 질문 녹음(최대 10초)과 F8 증강 화면 캡처는 64KB를 넘는다. 이 두 주소만 3MB까지 받는다.
+	@upload path /v1/voice/transcribe /v1/augments/detect
+	request_body @upload {
+		max_size 3MB
+	}
+	@small not path /v1/voice/transcribe /v1/augments/detect
+	request_body @small {
 		max_size 64KB
 	}
 	header -Server
